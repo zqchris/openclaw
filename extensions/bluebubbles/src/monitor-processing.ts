@@ -1213,11 +1213,12 @@ export async function processMessage(
               const basename = url.split("/").pop() ?? "";
               return /^voice-\d+\.(opus|ogg|m4a|caf|mp3)$/i.test(basename);
             };
-            const shouldVoice = payloadAudioAsVoice || mediaList.some(looksLikeVoiceFile);
             let first = true;
             for (const mediaUrl of mediaList) {
               const caption = first ? text : undefined;
               first = false;
+              // Per-item voice check: payload flag or filename pattern on this specific URL.
+              const isVoice = payloadAudioAsVoice || looksLikeVoiceFile(mediaUrl);
               const cachedBody = (caption ?? "").trim() || "<media:attachment>";
               const pendingId = rememberPendingOutboundMessageId({
                 accountId: account.accountId,
@@ -1237,7 +1238,7 @@ export async function processMessage(
                   caption: caption ?? undefined,
                   replyToId: replyToMessageGuid || null,
                   accountId: account.accountId,
-                  asVoice: shouldVoice || undefined,
+                  asVoice: isVoice || undefined,
                 });
               } catch (err) {
                 forgetPendingOutboundMessageId(pendingId);

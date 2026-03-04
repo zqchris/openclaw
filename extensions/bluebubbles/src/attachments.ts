@@ -201,7 +201,7 @@ export async function sendBlueBubblesAttachment(params: {
   // Convert audio to iMessage-native CAF (Opus) for voice bubbles.
   // BB's isAudioMessage creates broken 0-sec bubbles with MP3/raw Opus (issue #773).
   // Pre-converting to CAF+Opus bypasses BB's broken internal conversion.
-  const isAudioMessage = wantsVoice;
+  let isAudioMessage = wantsVoice;
   if (isAudioMessage) {
     const voiceInfo = resolveVoiceInfo(filename, contentType);
     if (!voiceInfo.isAudio) {
@@ -212,13 +212,22 @@ export async function sendBlueBubblesAttachment(params: {
       filename = ensureExtension(filename, ".caf", fallbackName);
       contentType = "audio/x-caf";
     } else {
-      // Convert MP3/Opus/other → CAF (Opus @ 24kHz) via ffmpeg
+      // Convert MP3/Opus/other → CAF (Opus @ 24kHz) via ffmpeg.
+      // If ffmpeg is unavailable, fall back to sending as a normal attachment
+      // rather than dropping the reply entirely.
       const inputExt =
         path.extname(filename).toLowerCase() ||
         (voiceInfo.isMp3 ? ".mp3" : voiceInfo.isOpus ? ".opus" : ".audio");
-      buffer = await convertToCafOpus(buffer, inputExt);
-      filename = ensureExtension(filename, ".caf", fallbackName);
-      contentType = "audio/x-caf";
+      try {
+        buffer = await convertToCafOpus(buffer, inputExt);
+        filename = ensureExtension(filename, ".caf", fallbackName);
+        contentType = "audio/x-caf";
+      } catch {
+        warnBlueBubbles(
+          "ffmpeg CAF conversion failed; sending as normal attachment instead of voice bubble.",
+        );
+        isAudioMessage = false;
+      }
     }
   }
 
