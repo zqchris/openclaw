@@ -1,0 +1,124 @@
+name: Claude Review Handler
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number on openclaw/openclaw"
+        required: true
+        type: string
+      upstream_repo:
+        description: "Upstream repo (owner/name)"
+        required: false
+        default: "openclaw/openclaw"
+        type: string
+      since_minutes:
+        description: "Only process comments from last N minutes"
+        required: false
+        default: "120"
+        type: string
+
+jobs:
+  handle-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Get PR branch info
+        id: pr-info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_DATA=$(gh api repos/${{ inputs.upstream_repo }}/pulls/${{ inputs.pr_number }} \
+            --jq '{head_ref: .head.ref, head_sha: .head.sha, title: .title, body: .body}')
+          echo "branch=$(echo "$PR_DATA" | jq -r .head_ref)" >> "$GITHUB_OUTPUT"
+          echo "title=$(echo "$PR_DATA" | jq -r .title)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-info.outputs.branch }}
+          fetch-depth: 0
+
+      - name: Fetch review comments
+        id: reviews
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE_MINUTES=${{ inputs.since_minutes }}
+          # Fetch all review comments, filter to recent non-bot ones
+          gh api repos/${{ inputs.upstream_repo }}/pulls/${{ inputs.pr_number }}/comments \
+            --paginate --jq '.[] | {user: .user.login, user_type: .user.type, path: .path, line: .line, body: .body, created_at: .created_at}' \
+            > /tmp/all_comments.jsonl
+
+          # Also fetch general PR comments (issue_comment)
+          gh api repos/${{ inputs.upstream_repo }}/issues/${{ inputs.pr_number }}/comments \
+            --paginate --jq '.[] | {user: .user.login, user_type: .user.type, path: "general", line: null, body: .body, created_at: .created_at}' \
+            >> /tmp/all_comments.jsonl
+
+          # Filter: skip our own replies, keep bot reviewers and humans
+          python3 -c "
+          import json, sys
+          from datetime import datetime, timedelta, timezone
+
+          cutoff = datetime.now(timezone.utc) - timedelta(minutes=int('$SINCE_MINUTES'))
+          skip_users = {'zqchris'}  # skip our own comments
+          comments = []
+          for line in open('/tmp/all_comments.jsonl'):
+              line = line.strip()
+              if not line:
+                  continue
+              c = json.loads(line)
+              created = datetime.fromisoformat(c['created_at'].replace('Z', '+00:00'))
+              if created < cutoff:
+                  continue
+              if c['user'] in skip_users:
+                  continue
+              comments.append(c)
+
+          if not comments:
+              print('No new review comments found.', file=sys.stderr)
+              sys.exit(0)
+
+          # Write structured summary
+          with open('/tmp/review_summary.md', 'w') as f:
+              f.write(f'# Review comments on PR #{\"${{ inputs.pr_number }}\"} ({len(comments)} comments)\n\n')
+              for c in comments:
+                  loc = f\"{c['path']}:{c['line']}\" if c['line'] else c['path']
+                  f.write(f\"## {c['user']} @ {loc}\n\")
+                  f.write(c['body'] + '\n\n')
+
+          print(f'{len(comments)} review comments to address')
+          " 2>&1
+
+          if [ -f /tmp/review_summary.md ]; then
+            echo "has_comments=true" >> "$GITHUB_OUTPUT"
+            echo "--- Review Summary ---"
+            cat /tmp/review_summary.md
+          else
+            echo "has_comments=false" >> "$GITHUB_OUTPUT"
+            echo "No new comments to process."
+          fi
+
+      - name: Run Claude Code
+        if: steps.reviews.outputs.has_comments == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are reviewing PR #${{ inputs.pr_number }} on ${{ inputs.upstream_repo }}.
+            Title: "${{ steps.pr-info.outputs.title }}"
+
+            Below are code review comments that need to be addressed.
+            Read the relevant source files, understand each comment, and make
+            the appropriate fixes. Then commit and push.
+
+            If a comment is not actionable (e.g., just praise or a question),
+            skip it.
+
+            Review comments:
+            ---
+            $(cat /tmp/review_summary.md)
+          claude_args: "--max-turns 15"
+          allowed_tools: "Read,Edit,Write,Bash(git commit:*),Bash(git push:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Glob,Grep"
