@@ -144,6 +144,8 @@ jobs:
         id: reviews
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SINCE_MIN: ${{ matrix.since }}
+          PR_NUM: ${{ matrix.pr }}
         run: |
           REPO="${{ inputs.upstream_repo || env.UPSTREAM_REPO }}"
           PR=${{ matrix.pr }}
@@ -191,9 +193,6 @@ jobs:
 
           print(f"{len(comments)} review comments to address")
           PYEOF
-        env:
-          SINCE_MIN: ${{ matrix.since }}
-          PR_NUM: ${{ matrix.pr }}
 
       - name: Check for comments
         id: check
