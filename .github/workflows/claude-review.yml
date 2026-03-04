@@ -1,39 +1,136 @@
 name: Claude Review Handler
 
 on:
+  # Cron: every 15 minutes, check for new review comments
+  schedule:
+    - cron: "*/15 * * * *"
+  # Manual trigger for immediate processing
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "PR number on openclaw/openclaw"
-        required: true
+        description: "PR number (leave empty for auto-detect)"
+        required: false
         type: string
       upstream_repo:
-        description: "Upstream repo (owner/name)"
+        description: "Upstream repo"
         required: false
         default: "openclaw/openclaw"
         type: string
       since_minutes:
-        description: "Only process comments from last N minutes"
+        description: "Look back N minutes for comments"
         required: false
         default: "120"
         type: string
 
+env:
+  UPSTREAM_REPO: openclaw/openclaw
+  FORK_OWNER: zqchris
+  # Comments older than this (minutes) are ignored during cron polls
+  POLL_WINDOW_MINUTES: 20
+
 jobs:
-  handle-review:
+  # ---------------------------------------------------------------
+  # Job 1: Discover open PRs with new, unaddressed review comments.
+  # Runs on every cron tick. Costs zero Anthropic tokens.
+  # ---------------------------------------------------------------
+  poll:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      has_work: ${{ steps.detect.outputs.has_work }}
+    steps:
+      - name: Detect PRs with new review comments
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ inputs.upstream_repo || env.UPSTREAM_REPO }}"
+          OWNER="${{ env.FORK_OWNER }}"
+
+          # If manual trigger with explicit PR number, use that directly
+          if [ -n "${{ inputs.pr_number }}" ]; then
+            echo "Manual trigger for PR #${{ inputs.pr_number }}"
+            echo "matrix=[{\"pr\":${{ inputs.pr_number }},\"since\":${{ inputs.since_minutes || 120 }}}]" >> "$GITHUB_OUTPUT"
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SINCE="${{ inputs.since_minutes || env.POLL_WINDOW_MINUTES }}"
+          CUTOFF=$(date -u -d "$SINCE minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+                   || date -u -v-${SINCE}M +%Y-%m-%dT%H:%M:%SZ)
+
+          echo "Checking $REPO for PRs by $OWNER with comments since $CUTOFF"
+
+          # Find open PRs authored by us
+          PRS=$(gh api "repos/$REPO/pulls?state=open&per_page=50" \
+            --jq "[.[] | select(.user.login == \"$OWNER\") | .number]")
+
+          if [ "$PRS" = "[]" ] || [ -z "$PRS" ]; then
+            echo "No open PRs found."
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
+            echo "has_work=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Open PRs: $PRS"
+          WORK="[]"
+
+          for PR in $(echo "$PRS" | jq -r '.[]'); do
+            # Check for review comments newer than cutoff, not by us
+            NEW_COMMENTS=$(gh api "repos/$REPO/pulls/$PR/comments?since=$CUTOFF&per_page=5" \
+              --jq "[.[] | select(.user.login != \"$OWNER\")] | length")
+
+            # Also check issue comments
+            NEW_ISSUE_COMMENTS=$(gh api "repos/$REPO/issues/$PR/comments?since=$CUTOFF&per_page=5" \
+              --jq "[.[] | select(.user.login != \"$OWNER\" and (.user.type != \"Bot\" or .body != \"\"))] | length")
+
+            TOTAL=$((NEW_COMMENTS + NEW_ISSUE_COMMENTS))
+
+            if [ "$TOTAL" -gt 0 ]; then
+              echo "  PR #$PR: $TOTAL new comments"
+              WORK=$(echo "$WORK" | jq ". + [{\"pr\": $PR, \"since\": $SINCE}]")
+            else
+              echo "  PR #$PR: no new comments"
+            fi
+          done
+
+          COUNT=$(echo "$WORK" | jq length)
+          echo "matrix=$WORK" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+            echo "Found $COUNT PRs with new review comments"
+          else
+            echo "has_work=false" >> "$GITHUB_OUTPUT"
+            echo "No new review comments to process"
+          fi
+
+  # ---------------------------------------------------------------
+  # Job 2: Run Claude Code to address review comments.
+  # Only runs when poll found new comments. Matrix over PRs.
+  # ---------------------------------------------------------------
+  handle:
+    needs: poll
+    if: needs.poll.outputs.has_work == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
       issues: write
       id-token: write
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.poll.outputs.matrix) }}
+      fail-fast: false
     steps:
       - name: Get PR branch info
         id: pr-info
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_DATA=$(gh api repos/${{ inputs.upstream_repo }}/pulls/${{ inputs.pr_number }} \
-            --jq '{head_ref: .head.ref, head_sha: .head.sha, title: .title, body: .body}')
+          REPO="${{ inputs.upstream_repo || env.UPSTREAM_REPO }}"
+          PR_DATA=$(gh api "repos/$REPO/pulls/${{ matrix.pr }}" \
+            --jq '{head_ref: .head.ref, title: .title}')
           echo "branch=$(echo "$PR_DATA" | jq -r .head_ref)" >> "$GITHUB_OUTPUT"
           echo "title=$(echo "$PR_DATA" | jq -r .title)" >> "$GITHUB_OUTPUT"
 
@@ -43,79 +140,89 @@ jobs:
           ref: ${{ steps.pr-info.outputs.branch }}
           fetch-depth: 0
 
-      - name: Fetch review comments
+      - name: Collect review comments
         id: reviews
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          SINCE_MINUTES=${{ inputs.since_minutes }}
-          gh api repos/${{ inputs.upstream_repo }}/pulls/${{ inputs.pr_number }}/comments \
-            --paginate --jq '.[] | {user: .user.login, user_type: .user.type, path: .path, line: .line, body: .body, created_at: .created_at}' \
+          REPO="${{ inputs.upstream_repo || env.UPSTREAM_REPO }}"
+          PR=${{ matrix.pr }}
+          SINCE=${{ matrix.since }}
+
+          gh api "repos/$REPO/pulls/$PR/comments" \
+            --paginate --jq '.[] | {user: .user.login, path: .path, line: .line, body: .body, created_at: .created_at}' \
             > /tmp/all_comments.jsonl
 
-          gh api repos/${{ inputs.upstream_repo }}/issues/${{ inputs.pr_number }}/comments \
-            --paginate --jq '.[] | {user: .user.login, user_type: .user.type, path: "general", line: null, body: .body, created_at: .created_at}' \
+          gh api "repos/$REPO/issues/$PR/comments" \
+            --paginate --jq '.[] | {user: .user.login, path: "general", line: null, body: .body, created_at: .created_at}' \
             >> /tmp/all_comments.jsonl
 
-          python3 -c "
-          import json, sys
+          python3 << 'PYEOF'
+          import json, sys, os
           from datetime import datetime, timedelta, timezone
 
-          cutoff = datetime.now(timezone.utc) - timedelta(minutes=int('$SINCE_MINUTES'))
-          skip_users = {'zqchris'}
+          since = int(os.environ.get("SINCE_MIN", "20"))
+          cutoff = datetime.now(timezone.utc) - timedelta(minutes=since)
+          skip_users = {"zqchris"}
           comments = []
-          for line in open('/tmp/all_comments.jsonl'):
+          for line in open("/tmp/all_comments.jsonl"):
               line = line.strip()
               if not line:
                   continue
               c = json.loads(line)
-              created = datetime.fromisoformat(c['created_at'].replace('Z', '+00:00'))
+              created = datetime.fromisoformat(c["created_at"].replace("Z", "+00:00"))
               if created < cutoff:
                   continue
-              if c['user'] in skip_users:
+              if c["user"] in skip_users:
                   continue
               comments.append(c)
 
           if not comments:
-              print('No new review comments found.', file=sys.stderr)
+              print("No new review comments found.", file=sys.stderr)
               sys.exit(0)
 
-          with open('/tmp/review_summary.md', 'w') as f:
-              f.write(f'# Review comments on PR #${{ inputs.pr_number }} ({len(comments)} comments)\n\n')
+          pr = os.environ.get("PR_NUM", "?")
+          with open("/tmp/review_summary.md", "w") as f:
+              f.write(f"# Review comments on PR #{pr} ({len(comments)} comments)\n\n")
               for c in comments:
-                  loc = f\"{c['path']}:{c['line']}\" if c['line'] else c['path']
-                  f.write(f\"## {c['user']} @ {loc}\n\")
-                  f.write(c['body'] + '\n\n')
+                  loc = f"{c['path']}:{c['line']}" if c["line"] else c["path"]
+                  f.write(f"## {c['user']} @ {loc}\n")
+                  f.write(c["body"] + "\n\n")
 
-          print(f'{len(comments)} review comments to address')
-          " 2>&1
+          print(f"{len(comments)} review comments to address")
+          PYEOF
+        env:
+          SINCE_MIN: ${{ matrix.since }}
+          PR_NUM: ${{ matrix.pr }}
 
+      - name: Check for comments
+        id: check
+        run: |
           if [ -f /tmp/review_summary.md ]; then
             echo "has_comments=true" >> "$GITHUB_OUTPUT"
+            echo "--- Review Summary ---"
             cat /tmp/review_summary.md
           else
             echo "has_comments=false" >> "$GITHUB_OUTPUT"
-            echo "No new comments to process."
+            echo "No actionable comments."
           fi
 
-      - name: Write review context
-        if: steps.reviews.outputs.has_comments == 'true'
-        run: |
-          cat /tmp/review_summary.md > /tmp/claude_prompt.txt
-
       - name: Run Claude Code
-        if: steps.reviews.outputs.has_comments == 'true'
+        if: steps.check.outputs.has_comments == 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            You are addressing code review feedback on PR #${{ inputs.pr_number }} (${{ inputs.upstream_repo }}).
+            You are addressing code review feedback on PR #${{ matrix.pr }}.
             Title: "${{ steps.pr-info.outputs.title }}"
 
-            Read the review comments below. For each actionable comment, read the
-            relevant source files, understand the issue, and make the fix.
-            Skip non-actionable comments (praise, questions, etc).
-            After fixing, commit with a descriptive message and push.
+            Read each review comment below. For actionable feedback (bug reports,
+            code improvements, missing checks), read the relevant source files,
+            understand the issue, and make the fix. Skip non-actionable comments
+            (praise, questions, acknowledgments).
+
+            After fixing, commit with a descriptive message and push to the
+            current branch.
 
             Review comments:
             ---
