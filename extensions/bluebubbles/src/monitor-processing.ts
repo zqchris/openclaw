@@ -1210,7 +1210,9 @@ export async function processMessage(
             const payloadAudioAsVoice =
               (payload as { audioAsVoice?: unknown }).audioAsVoice === true;
             const looksLikeVoiceFile = (url: string): boolean => {
-              const basename = url.split("/").pop() ?? "";
+              // Strip query/fragment before matching (signed URLs like voice-123.opus?token=...)
+              const pathname = url.split("?")[0].split("#")[0];
+              const basename = pathname.split("/").pop() ?? "";
               return /^voice-\d+\.(opus|ogg|m4a|caf|mp3)$/i.test(basename);
             };
             let first = true;
