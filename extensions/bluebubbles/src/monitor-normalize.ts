@@ -727,7 +727,9 @@ export function normalizeWebhookMessage(
   // BlueBubbles may omit `handle` in webhook payloads; for DM chat GUIDs we can still infer sender.
   const senderFallbackFromChatGuid =
     !senderId && !isGroup && chatGuid ? extractHandleFromChatGuid(chatGuid) : null;
-  const normalizedSender = normalizeBlueBubblesHandle(senderId || senderFallbackFromChatGuid || "");
+  const normalizedSender = normalizeBlueBubblesHandle(
+    senderId || senderFallbackFromChatGuid || (fromMe ? "me" : ""),
+  );
   if (!normalizedSender) {
     return null;
   }
@@ -803,7 +805,9 @@ export function normalizeWebhookReaction(
 
   const senderFallbackFromChatGuid =
     !senderId && !isGroup && chatGuid ? extractHandleFromChatGuid(chatGuid) : null;
-  const normalizedSender = normalizeBlueBubblesHandle(senderId || senderFallbackFromChatGuid || "");
+  const normalizedSender = normalizeBlueBubblesHandle(
+    senderId || senderFallbackFromChatGuid || (fromMe ? "me" : ""),
+  );
   if (!normalizedSender) {
     return null;
   }
