@@ -29,6 +29,7 @@ import {
 import type { sendMessageIMessage } from "../../imessage/send.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
+import { isAudioFileName } from "../../media/mime.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { markdownToSignalTextChunks, type SignalTextStyleRange } from "../../signal/format.js";
 import { sendMessageSignal } from "../../signal/send.js";
@@ -167,6 +168,7 @@ function createPluginHandler(
     ...baseCtx,
     replyToId: overrides?.replyToId ?? baseCtx.replyToId,
     threadId: overrides?.threadId ?? baseCtx.threadId,
+    audioAsVoice: overrides?.audioAsVoice ?? baseCtx.audioAsVoice,
   });
   return {
     chunker,
@@ -778,9 +780,10 @@ async function deliverOutboundPayloadsCore(
           results.push(delivery);
           lastMessageId = delivery.messageId;
         } else {
+          const audioAsVoice = effectivePayload.audioAsVoice && isAudioFileName(url);
           const delivery = await handler.sendMedia(caption, url, {
             ...sendOverrides,
-            audioAsVoice: effectivePayload.audioAsVoice,
+            audioAsVoice: audioAsVoice || undefined,
           });
           results.push(delivery);
           lastMessageId = delivery.messageId;
