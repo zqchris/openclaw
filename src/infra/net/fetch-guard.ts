@@ -90,6 +90,22 @@ function resolveGuardedFetchMode(params: GuardedFetchOptions): GuardedFetchMode 
   return GUARDED_FETCH_MODE.STRICT;
 }
 
+function resolveSsrfPolicyForGuardedFetch(params: {
+  policy?: SsrFPolicy;
+  canUseTrustedEnvProxy: boolean;
+}): SsrFPolicy | undefined {
+  if (!params.canUseTrustedEnvProxy) {
+    return params.policy;
+  }
+  return {
+    ...params.policy,
+    // Trusted env-proxy mode is explicitly for operator-controlled proxy routing.
+    // When a local proxy returns RFC2544 FakeIP answers (for example Surge 198.18/15),
+    // keep public-hostname requests working without widening localhost/private-host access.
+    allowRfc2544BenchmarkRange: true,
+  };
+}
+
 function isRedirectStatus(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
@@ -189,12 +205,16 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
 
     let dispatcher: Dispatcher | null = null;
     try {
-      const pinned = await resolvePinnedHostnameWithPolicy(parsedUrl.hostname, {
-        lookupFn: params.lookupFn,
-        policy: params.policy,
-      });
       const canUseTrustedEnvProxy =
         mode === GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY && hasProxyEnvConfigured();
+      const ssrfPolicy = resolveSsrfPolicyForGuardedFetch({
+        policy: params.policy,
+        canUseTrustedEnvProxy,
+      });
+      const pinned = await resolvePinnedHostnameWithPolicy(parsedUrl.hostname, {
+        lookupFn: params.lookupFn,
+        policy: ssrfPolicy,
+      });
       if (canUseTrustedEnvProxy) {
         dispatcher = new EnvHttpProxyAgent();
       } else if (params.pinDns !== false) {
