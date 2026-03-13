@@ -60,11 +60,12 @@ export type PluginHttpRequestHandler = (
 ) => Promise<boolean>;
 
 export function createGatewayPluginRequestHandler(params: {
-  registry: PluginRegistry;
+  getRegistry: () => PluginRegistry;
   log: SubsystemLogger;
 }): PluginHttpRequestHandler {
-  const { registry, log } = params;
+  const { getRegistry, log } = params;
   return async (req, res, providedPathContext, dispatchContext) => {
+    const registry = getRegistry();
     const routes = registry.httpRoutes ?? [];
     if (routes.length === 0) {
       return false;

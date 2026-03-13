@@ -5,6 +5,7 @@ import { type CanvasHostHandler, createCanvasHostHandler } from "../canvas-host/
 import type { CliDeps } from "../cli/deps.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import type { PluginRegistry } from "../plugins/registry.js";
+import { getActivePluginRegistry } from "../plugins/runtime.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
@@ -118,12 +119,16 @@ export async function createGatewayRuntimeState(params: {
     logHooks: params.logHooks,
   });
 
+  // Always read the live active registry so config reloads take effect
+  // without restarting the gateway HTTP handler.
+  const getPluginRegistry = (): PluginRegistry =>
+    getActivePluginRegistry() ?? params.pluginRegistry;
   const handlePluginRequest = createGatewayPluginRequestHandler({
-    registry: params.pluginRegistry,
+    getRegistry: getPluginRegistry,
     log: params.logPlugins,
   });
   const shouldEnforcePluginGatewayAuth = (pathContext: PluginRoutePathContext): boolean => {
-    return shouldEnforceGatewayAuthForPluginPath(params.pluginRegistry, pathContext);
+    return shouldEnforceGatewayAuthForPluginPath(getPluginRegistry(), pathContext);
   };
 
   const bindHosts = await resolveGatewayListenHosts(params.bindHost);
