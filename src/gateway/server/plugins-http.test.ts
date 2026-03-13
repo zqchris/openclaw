@@ -137,6 +137,32 @@ describe("createGatewayPluginRequestHandler", () => {
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("missing scope: operator.admin"));
   });
 
+  it("uses the registry returned at request time, not at construction time", async () => {
+    const log = createPluginLog();
+    let currentRegistry = createTestRegistry(); // initially empty — no routes
+    const handler = createGatewayPluginRequestHandler({
+      getRegistry: () => currentRegistry,
+      log,
+    });
+
+    // First request: no routes registered → should not handle
+    const { res: res1 } = makeMockHttpResponse();
+    const handled1 = await handler({ url: "/hook" } as IncomingMessage, res1);
+    expect(handled1).toBe(false);
+
+    // Simulate a config reload that adds a route
+    const routeHandler = vi.fn(async () => true);
+    currentRegistry = createTestRegistry({
+      httpRoutes: [createRoute({ path: "/hook", handler: routeHandler })],
+    });
+
+    // Second request: route now exists → should handle
+    const { res: res2 } = makeMockHttpResponse();
+    const handled2 = await handler({ url: "/hook" } as IncomingMessage, res2);
+    expect(handled2).toBe(true);
+    expect(routeHandler).toHaveBeenCalledOnce();
+  });
+
   it("returns false when no routes are registered", async () => {
     const log = createPluginLog();
     const handler = createGatewayPluginRequestHandler({
