@@ -48,9 +48,13 @@ let previousRegistry = getActivePluginRegistry();
 
 beforeEach(() => {
   previousRegistry = getActivePluginRegistry();
+  (process as typeof process & { __openclawPluginRegistry?: unknown }).__openclawPluginRegistry =
+    undefined;
 });
 
 afterEach(() => {
+  (process as typeof process & { __openclawPluginRegistry?: unknown }).__openclawPluginRegistry =
+    undefined;
   if (previousRegistry) {
     setActivePluginRegistry(previousRegistry);
   }
@@ -354,6 +358,25 @@ describe("createGatewayPluginRequestHandler", () => {
 
     expect(handled).toBe(true);
     expect(startupHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches routes from the process-backed registry when the local realm is empty", async () => {
+    const liveHandler = vi.fn(async (_req, res: ServerResponse) => {
+      res.statusCode = 204;
+      return true;
+    });
+    const handler = createHandlerWithRegistry({ registry: createTestRegistry() });
+    const liveRegistry = createTestRegistry({
+      httpRoutes: [createRoute({ path: "/cross-realm", handler: liveHandler })],
+    });
+    (process as typeof process & { __openclawPluginRegistry?: unknown }).__openclawPluginRegistry =
+      liveRegistry;
+
+    const { res } = makeMockHttpResponse();
+    const handled = await handler({ url: "/cross-realm" } as IncomingMessage, res);
+
+    expect(handled).toBe(true);
+    expect(liveHandler).toHaveBeenCalledTimes(1);
   });
 
   it("logs and responds with 500 when a route throws", async () => {
