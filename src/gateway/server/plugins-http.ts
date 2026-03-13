@@ -26,6 +26,9 @@ export {
 export { shouldEnforceGatewayAuthForPluginPath } from "./plugins-http/route-auth.js";
 
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
+type ProcessWithPluginRegistry = typeof process & {
+  __openclawPluginRegistry?: PluginRegistry;
+};
 
 function resolveCandidateRegistries(initialRegistry: PluginRegistry): PluginRegistry[] {
   const activeRegistry = getActivePluginRegistry();
@@ -73,6 +76,10 @@ export function createGatewayPluginRequestHandler(params: {
   log: SubsystemLogger;
 }): PluginHttpRequestHandler {
   const { registry: initialRegistry, log } = params;
+  // jiti plugin loading can create a separate VM realm from the gateway HTTP
+  // server. Persist the live registry on process so route matching can still
+  // see plugin-owned webhooks from either side.
+  (process as ProcessWithPluginRegistry).__openclawPluginRegistry = initialRegistry;
   return async (req, res, providedPathContext, dispatchContext) => {
     const pathContext =
       providedPathContext ??
@@ -87,10 +94,6 @@ export function createGatewayPluginRequestHandler(params: {
     let registry: PluginRegistry | null = null;
     let matchedRoutes: ReturnType<typeof findMatchingPluginHttpRoutes> | null = null;
     for (const candidate of resolveCandidateRegistries(initialRegistry)) {
-      const routes = candidate.httpRoutes ?? [];
-      if (routes.length === 0) {
-        continue;
-      }
       const candidateMatches = findMatchingPluginHttpRoutes(candidate, pathContext);
       if (candidateMatches.length === 0) {
         continue;

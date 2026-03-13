@@ -7,6 +7,17 @@ import {
 } from "./path-context.js";
 
 type PluginHttpRouteEntry = NonNullable<PluginRegistry["httpRoutes"]>[number];
+type ProcessWithPluginRegistry = typeof process & {
+  __openclawPluginRegistry?: PluginRegistry;
+};
+
+function resolveCandidateRoutes(registry: PluginRegistry): PluginHttpRouteEntry[] {
+  const ownRoutes = registry.httpRoutes ?? [];
+  const liveRegistry = (process as ProcessWithPluginRegistry).__openclawPluginRegistry;
+  const liveRoutes =
+    liveRegistry && liveRegistry !== registry ? (liveRegistry.httpRoutes ?? []) : [];
+  return liveRoutes.length > 0 ? [...ownRoutes, ...liveRoutes] : ownRoutes;
+}
 
 export function doesPluginRouteMatchPath(
   route: PluginHttpRouteEntry,
@@ -23,7 +34,7 @@ export function findMatchingPluginHttpRoutes(
   registry: PluginRegistry,
   context: PluginRoutePathContext,
 ): PluginHttpRouteEntry[] {
-  const routes = registry.httpRoutes ?? [];
+  const routes = resolveCandidateRoutes(registry);
   if (routes.length === 0) {
     return [];
   }
