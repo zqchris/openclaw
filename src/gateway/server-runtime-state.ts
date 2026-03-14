@@ -4,7 +4,7 @@ import { CANVAS_HOST_PATH } from "../canvas-host/a2ui.js";
 import { type CanvasHostHandler, createCanvasHostHandler } from "../canvas-host/server.js";
 import type { CliDeps } from "../cli/deps.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
-import { createEmptyPluginRegistry, type PluginRegistry } from "../plugins/registry.js";
+import type { PluginRegistry } from "../plugins/registry.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
@@ -122,9 +122,10 @@ export async function createGatewayRuntimeState(params: {
   // Always read the live active registry so config reloads take effect
   // without restarting the gateway HTTP handler.
   // getActivePluginRegistry() is always non-null (initialised with an empty
-  // registry on module load), so every request sees the latest registry.
+  // registry on module load), so the fallback to params.pluginRegistry is
+  // only reached if that invariant is ever broken.
   const getPluginRegistry = (): PluginRegistry =>
-    getActivePluginRegistry() ?? createEmptyPluginRegistry();
+    getActivePluginRegistry() ?? params.pluginRegistry;
   const handlePluginRequest = createGatewayPluginRequestHandler({
     getRegistry: getPluginRegistry,
     log: params.logPlugins,
