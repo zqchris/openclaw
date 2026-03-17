@@ -12,7 +12,7 @@ import {
 import { downloadBlueBubblesAttachment } from "./attachments.js";
 import { markBlueBubblesChatRead, sendBlueBubblesTyping } from "./chat.js";
 import { resolveBlueBubblesConversationRoute } from "./conversation-route.js";
-import { fetchBlueBubblesHistory } from "./history.js";
+import { fetchBlueBubblesHistory, fetchBlueBubblesMessageByGuid } from "./history.js";
 import { sendBlueBubblesMedia } from "./media-send.js";
 import {
   buildMessagePlaceholder,
@@ -1051,6 +1051,35 @@ export async function processMessage(
           runtime,
           `reply-context cache hit replyToId=${replyToId} sender=${replyToSender ?? ""} body="${preview}"`,
         );
+      }
+    }
+
+    // Fallback: fetch the quoted message from BlueBubbles API when cache missed body.
+    if (!replyToBody && baseUrl && password) {
+      try {
+        const fetched = await fetchBlueBubblesMessageByGuid(replyToId, {
+          cfg: config,
+          accountId: account.accountId,
+          timeoutMs: 5000,
+        });
+        if (fetched) {
+          if (fetched.text) {
+            replyToBody = fetched.text;
+          }
+          if (!replyToSender && fetched.sender) {
+            replyToSender = fetched.sender;
+          }
+          if (core.logging.shouldLogVerbose()) {
+            const preview = (fetched.text ?? "").replace(/\s+/g, " ").slice(0, 120);
+            logVerbose(
+              core,
+              runtime,
+              `reply-context API fallback replyToId=${replyToId} sender=${replyToSender ?? ""} body="${preview}"`,
+            );
+          }
+        }
+      } catch {
+        // Best-effort; proceed without reply body.
       }
     }
   }
