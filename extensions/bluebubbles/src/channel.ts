@@ -247,89 +247,6 @@ export const bluebubblesPlugin: ChannelPlugin<ResolvedBlueBubblesAccount, BlueBu
             },
           };
         },
-        onlyDefinedFields: true,
-      });
-    },
-  },
-  pairing: {
-    idLabel: "bluebubblesSenderId",
-    normalizeAllowEntry: (entry) => normalizeBlueBubblesHandle(entry.replace(/^bluebubbles:/i, "")),
-    notifyApproval: async ({ cfg, id }) => {
-      await sendMessageBlueBubbles(id, PAIRING_APPROVED_MESSAGE, {
-        cfg: cfg,
-      });
-    },
-  },
-  outbound: {
-    deliveryMode: "direct",
-    textChunkLimit: 4000,
-    resolveTarget: ({ to }) => {
-      const trimmed = to?.trim();
-      if (!trimmed) {
-        return {
-          ok: false,
-          error: new Error("Delivering to BlueBubbles requires --to <handle|chat_guid:GUID>"),
-        };
-      }
-      return { ok: true, to: trimmed };
-    },
-    sendText: async ({ cfg, to, text, accountId, replyToId }) => {
-      const rawReplyToId = typeof replyToId === "string" ? replyToId.trim() : "";
-      // Resolve short ID (e.g., "5") to full UUID
-      const replyToMessageGuid = rawReplyToId
-        ? resolveBlueBubblesMessageId(rawReplyToId, { requireKnownShortId: true })
-        : "";
-      const result = await sendMessageBlueBubbles(to, text, {
-        cfg: cfg,
-        accountId: accountId ?? undefined,
-        replyToMessageGuid: replyToMessageGuid || undefined,
-      });
-      return { channel: "bluebubbles", ...result };
-    },
-    sendMedia: async (ctx) => {
-      const { cfg, to, text, mediaUrl, accountId, replyToId } = ctx;
-      const { mediaPath, mediaBuffer, contentType, filename, caption, audioAsVoice } = ctx as {
-        mediaPath?: string;
-        mediaBuffer?: Uint8Array;
-        contentType?: string;
-        filename?: string;
-        caption?: string;
-        audioAsVoice?: boolean;
-      };
-      const resolvedCaption = caption ?? text;
-      const result = await sendBlueBubblesMedia({
-        cfg: cfg,
-        to,
-        mediaUrl,
-        mediaPath,
-        mediaBuffer,
-        contentType,
-        filename,
-        caption: resolvedCaption ?? undefined,
-        replyToId: replyToId ?? null,
-        accountId: accountId ?? undefined,
-        asVoice: audioAsVoice ?? undefined,
-      });
-
-      return { channel: "bluebubbles", ...result };
-    },
-  },
-  status: {
-    defaultRuntime: {
-      accountId: DEFAULT_ACCOUNT_ID,
-      running: false,
-      lastStartAt: null,
-      lastStopAt: null,
-      lastError: null,
-    },
-    collectStatusIssues: collectBlueBubblesStatusIssues,
-    buildChannelSummary: ({ snapshot }) =>
-      buildProbeChannelStatusSummary(snapshot, { baseUrl: snapshot.baseUrl ?? null }),
-    probeAccount: async ({ account, timeoutMs }) =>
-      probeBlueBubbles({
-        baseUrl: account.baseUrl,
-        password: account.config.password ?? null,
-        timeoutMs,
       }),
       gateway: {
         startAccount: async (ctx) => {
@@ -414,12 +331,13 @@ export const bluebubblesPlugin: ChannelPlugin<ResolvedBlueBubblesAccount, BlueBu
         sendMedia: async (ctx) => {
           const runtime = await loadBlueBubblesChannelRuntime();
           const { cfg, to, text, mediaUrl, accountId, replyToId } = ctx;
-          const { mediaPath, mediaBuffer, contentType, filename, caption } = ctx as {
+          const { mediaPath, mediaBuffer, contentType, filename, caption, audioAsVoice } = ctx as {
             mediaPath?: string;
             mediaBuffer?: Uint8Array;
             contentType?: string;
             filename?: string;
             caption?: string;
+            audioAsVoice?: boolean;
           };
           return await runtime.sendBlueBubblesMedia({
             cfg: cfg,
@@ -432,6 +350,7 @@ export const bluebubblesPlugin: ChannelPlugin<ResolvedBlueBubblesAccount, BlueBu
             caption: caption ?? text ?? undefined,
             replyToId: replyToId ?? null,
             accountId: accountId ?? undefined,
+            asVoice: audioAsVoice ?? undefined,
           });
         },
       },
