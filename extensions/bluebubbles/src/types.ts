@@ -116,6 +116,12 @@ export type BlueBubblesAccountConfig = {
    * `associatedMessageGuid`. Default: false.
    */
   coalesceSameSenderDms?: boolean;
+  /**
+   * Map iMessage handles (email, phone) to display names.
+   * Multiple handles can map to the same name (e.g. mainland + HK numbers).
+   * Used as sender label in the envelope when BB server omits displayName.
+   */
+  handleNames?: Record<string, string>;
 };
 
 export type BlueBubblesConfig = Omit<BlueBubblesAccountConfig, "actions"> & {
