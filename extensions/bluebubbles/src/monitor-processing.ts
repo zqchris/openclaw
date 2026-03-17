@@ -649,7 +649,9 @@ export async function processMessage(
       chatGuid: message.chatGuid,
       chatIdentifier: message.chatIdentifier,
       chatId: message.chatId,
-      senderLabel: message.fromMe ? "me" : message.senderId,
+      senderLabel: message.fromMe
+        ? "me"
+        : message.senderName || account.config.handleNames?.[message.senderId] || message.senderId,
       body: rawBody,
       timestamp: message.timestamp ?? Date.now(),
     });
@@ -1135,7 +1137,11 @@ export async function processMessage(
   // Build fromLabel the same way as iMessage/Signal (formatInboundFromLabel):
   // group label + id for groups, sender for DMs.
   // The sender identity is included in the envelope body via formatInboundEnvelope.
-  const senderLabel = message.senderName || `user:${message.senderId}`;
+  const handleNameFromConfig = message.senderId
+    ? account.config.handleNames?.[message.senderId]
+    : undefined;
+  const resolvedSenderName = message.senderName || handleNameFromConfig;
+  const senderLabel = resolvedSenderName || `user:${message.senderId}`;
   const fromLabel = isGroup
     ? `${normalizeOptionalString(message.chatName) || "Group"} id:${peerId}`
     : senderLabel !== message.senderId
@@ -1145,7 +1151,9 @@ export async function processMessage(
   const groupMembers = isGroup
     ? formatGroupMembers({
         participants: message.participants,
-        fallback: message.senderId ? { id: message.senderId, name: message.senderName } : undefined,
+        fallback: message.senderId
+          ? { id: message.senderId, name: resolvedSenderName || message.senderName }
+          : undefined,
       })
     : undefined;
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
@@ -1164,7 +1172,7 @@ export async function processMessage(
     envelope: envelopeOptions,
     body: baseBody,
     chatType: isGroup ? "group" : "direct",
-    sender: { name: message.senderName || undefined, id: message.senderId },
+    sender: { name: resolvedSenderName || undefined, id: message.senderId },
   });
   let chatGuidForActions = chatGuid;
   if (!chatGuidForActions && baseUrl && password) {
