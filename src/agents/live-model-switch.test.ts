@@ -336,6 +336,36 @@ describe("live model switch", () => {
     });
   });
 
+  it("uses the caller-supplied run default when it differs from the agent primary model", async () => {
+    state.loadSessionStoreMock.mockReturnValue({
+      main: {},
+    });
+
+    const { resolveLiveSessionModelSelection } = await loadModule();
+
+    expect(
+      resolveLiveSessionModelSelection({
+        cfg: { session: { store: "/tmp/custom-store.json" } },
+        sessionKey: "main",
+        agentId: "reply",
+        defaultProvider: "google",
+        defaultModel: "gemini-2.5-flash",
+      }),
+    ).toEqual({
+      provider: "google",
+      model: "gemini-2.5-flash",
+      authProfileId: undefined,
+      authProfileIdSource: undefined,
+    });
+    expect(state.resolvePersistedSelectedModelRefMock).toHaveBeenCalledWith({
+      defaultProvider: "google",
+      runtimeProvider: undefined,
+      runtimeModel: undefined,
+      overrideProvider: undefined,
+      overrideModel: undefined,
+    });
+  });
+
   it("queues a live switch only when an active run was aborted", async () => {
     state.abortEmbeddedPiRunMock.mockReturnValue(true);
 
