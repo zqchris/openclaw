@@ -36,6 +36,7 @@ const PROVIDER_IMPLICIT_MERGERS: Partial<
 };
 
 const PLUGIN_DISCOVERY_ORDERS = ["simple", "profile", "paired", "late"] as const;
+const DEFAULT_PROVIDER_DISCOVERY_TIMEOUT_MS = 5_000;
 
 type ImplicitProviderParams = {
   agentDir: string;
@@ -52,18 +53,29 @@ type ImplicitProviderContext = ImplicitProviderParams & {
   resolveProviderAuth: ProviderAuthResolver;
 };
 
-function resolveLiveProviderCatalogTimeoutMs(env: NodeJS.ProcessEnv): number | null {
+function resolveProviderCatalogTimeoutMs(env: NodeJS.ProcessEnv): number | null {
+  // Explicit env var override takes priority
+  const explicit = env.OPENCLAW_PROVIDER_DISCOVERY_TIMEOUT_MS?.trim();
+  if (explicit) {
+    const parsed = Number.parseInt(explicit, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
   const live =
     env.OPENCLAW_LIVE_TEST === "1" || env.OPENCLAW_LIVE_GATEWAY === "1" || env.LIVE === "1";
-  if (!live) {
-    return null;
-  }
-  const raw = env.OPENCLAW_LIVE_PROVIDER_DISCOVERY_TIMEOUT_MS?.trim();
-  if (!raw) {
+  if (live) {
+    const raw = env.OPENCLAW_LIVE_PROVIDER_DISCOVERY_TIMEOUT_MS?.trim();
+    if (raw) {
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+    }
     return 15_000;
   }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+
+  // Default: 5s timeout so a stuck provider doesn't hang the gateway
+  return DEFAULT_PROVIDER_DISCOVERY_TIMEOUT_MS;
 }
 
 function resolveProviderDiscoveryFilter(params: {
@@ -252,7 +264,7 @@ async function resolvePluginImplicitProviders(
       resolveProviderApiKey: resolveCatalogProviderApiKey,
       resolveProviderAuth: (providerId, options) =>
         ctx.resolveProviderAuth(providerId?.trim() || provider.id, options),
-      timeoutMs: resolveLiveProviderCatalogTimeoutMs(ctx.env),
+      timeoutMs: resolveProviderCatalogTimeoutMs(ctx.env),
     });
     if (!result) {
       continue;
