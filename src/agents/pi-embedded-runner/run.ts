@@ -593,6 +593,8 @@ export async function runEmbeddedPiAgent(
       });
       provider = hookSelection.provider;
       modelId = hookSelection.modelId;
+      const runDefaultProvider = provider;
+      const runDefaultModel = modelId;
       const legacyBeforeAgentStartResult = hookSelection.legacyBeforeAgentStartResult;
       startupStages.mark("hooks");
       await ensureSelectedAgentHarnessPlugin({
@@ -1673,8 +1675,8 @@ export async function runEmbeddedPiAgent(
             cfg: params.config,
             sessionKey: resolvedSessionKey,
             agentId: params.agentId,
-            defaultProvider: DEFAULT_PROVIDER,
-            defaultModel: DEFAULT_MODEL,
+            defaultProvider: runDefaultProvider,
+            defaultModel: runDefaultModel,
             currentProvider: provider,
             currentModel: modelId,
             currentAuthProfileId: preferredProfileId,
