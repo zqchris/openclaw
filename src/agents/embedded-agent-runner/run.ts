@@ -1063,6 +1063,8 @@ async function runEmbeddedAgentInternal(
       modelId = hookSelection.modelId;
       const requestedModelId = modelId;
       const beforeAgentStartResult = hookSelection.beforeAgentStartResult;
+      const runDefaultProvider = provider;
+      const runDefaultModel = modelId;
       startupStages.mark("hooks");
       await ensureSelectedAgentHarnessPlugin({
         provider,
@@ -2532,8 +2534,8 @@ async function runEmbeddedAgentInternal(
             cfg: params.config,
             sessionKey: resolvedSessionKey,
             agentId: params.agentId,
-            defaultProvider: DEFAULT_PROVIDER,
-            defaultModel: DEFAULT_MODEL,
+            defaultProvider: runDefaultProvider,
+            defaultModel: runDefaultModel,
             currentProvider: provider,
             currentModel: modelId,
             currentAgentRuntimeOverride: params.agentHarnessRuntimeOverride,
