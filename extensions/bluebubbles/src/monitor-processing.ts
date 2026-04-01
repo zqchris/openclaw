@@ -1,4 +1,14 @@
 import {
+  buildCanonicalSentMessageHookContext,
+  createInternalHookEvent,
+  fireAndForgetHook,
+  toInternalMessageSentContext,
+  toPluginMessageContext,
+  toPluginMessageSentEvent,
+  triggerInternalHook,
+} from "openclaw/plugin-sdk/hook-runtime";
+import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
+import {
   resolveOutboundMediaUrls,
   resolveTextChunksWithFallback,
   sendMediaWithLeadingCaption,
@@ -81,6 +91,62 @@ const DEFAULT_TEXT_LIMIT = 4000;
 const invalidAckReactions = new Set<string>();
 const REPLY_DIRECTIVE_TAG_RE = /\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]/gi;
 const PENDING_OUTBOUND_MESSAGE_ID_TTL_MS = 2 * 60 * 1000;
+
+function emitBlueBubblesMessageSentHooks(params: {
+  sessionKey?: string;
+  accountId?: string;
+  to: string;
+  content: string;
+  success: boolean;
+  messageId?: string;
+  error?: string;
+  isGroup?: boolean;
+  groupId?: string;
+}): void {
+  const hookRunner = getGlobalHookRunner();
+  const canEmitInternalHook = Boolean(params.sessionKey);
+  const hasMessageSentHooks = hookRunner?.hasHooks("message_sent") ?? false;
+  if (!hasMessageSentHooks && !canEmitInternalHook) {
+    return;
+  }
+  const canonical = buildCanonicalSentMessageHookContext({
+    to: params.to,
+    content: params.content,
+    success: params.success,
+    ...(params.error ? { error: params.error } : {}),
+    channelId: "bluebubbles",
+    accountId: params.accountId,
+    conversationId: params.to,
+    messageId: params.messageId,
+    ...(params.isGroup != null ? { isGroup: params.isGroup } : {}),
+    ...(params.groupId ? { groupId: params.groupId } : {}),
+  });
+  if (hasMessageSentHooks) {
+    fireAndForgetHook(
+      Promise.resolve(
+        hookRunner!.runMessageSent(
+          toPluginMessageSentEvent(canonical),
+          toPluginMessageContext(canonical),
+        ),
+      ),
+      "bluebubbles: message_sent plugin hook failed",
+    );
+  }
+  if (!canEmitInternalHook) {
+    return;
+  }
+  fireAndForgetHook(
+    triggerInternalHook(
+      createInternalHookEvent(
+        "message",
+        "sent",
+        params.sessionKey!,
+        toInternalMessageSentContext(canonical),
+      ),
+    ),
+    "bluebubbles: message:sent internal hook failed",
+  );
+}
 
 type PendingOutboundMessageId = {
   id: number;
@@ -1536,45 +1602,71 @@ export async function processMessage(
             const text = sanitizeReplyDirectiveText(
               core.channel.text.convertMarkdownTables(payload.text ?? "", tableMode),
             );
-            await sendMediaWithLeadingCaption({
-              mediaUrls: mediaList,
-              caption: text,
-              send: async ({ mediaUrl, caption }) => {
-                const cachedBody = (caption ?? "").trim() || "<media:attachment>";
-                const pendingId = rememberPendingOutboundMessageId({
-                  accountId: account.accountId,
-                  sessionKey: route.sessionKey,
-                  outboundTarget,
-                  chatGuid: chatGuidForActions ?? chatGuid,
-                  chatIdentifier,
-                  chatId,
-                  snippet: cachedBody,
-                });
-                let result: Awaited<ReturnType<typeof sendBlueBubblesMedia>>;
-                try {
-                  result = await sendBlueBubblesMedia({
-                    cfg: config,
-                    to: outboundTarget,
-                    mediaUrl,
-                    caption: caption ?? undefined,
-                    replyToId: replyToMessageGuid || null,
+            let lastMessageId: string | undefined;
+            try {
+              await sendMediaWithLeadingCaption({
+                mediaUrls: mediaList,
+                caption: text,
+                send: async ({ mediaUrl, caption }) => {
+                  const cachedBody = (caption ?? "").trim() || "<media:attachment>";
+                  const pendingId = rememberPendingOutboundMessageId({
                     accountId: account.accountId,
-                    asVoice: payload.audioAsVoice === true,
+                    sessionKey: route.sessionKey,
+                    outboundTarget,
+                    chatGuid: chatGuidForActions ?? chatGuid,
+                    chatIdentifier,
+                    chatId,
+                    snippet: cachedBody,
                   });
-                } catch (err) {
-                  forgetPendingOutboundMessageId(pendingId);
-                  throw err;
-                }
-                if (maybeEnqueueOutboundMessageId(result.messageId, cachedBody)) {
-                  forgetPendingOutboundMessageId(pendingId);
-                }
-                sentMessage = true;
-                statusSink?.({ lastOutboundAt: Date.now() });
-                if (info.kind === "block") {
-                  restartTypingSoon();
-                }
-              },
-            });
+                  let result: Awaited<ReturnType<typeof sendBlueBubblesMedia>>;
+                  try {
+                    result = await sendBlueBubblesMedia({
+                      cfg: config,
+                      to: outboundTarget,
+                      mediaUrl,
+                      caption: caption ?? undefined,
+                      replyToId: replyToMessageGuid || null,
+                      accountId: account.accountId,
+                      asVoice: payload.audioAsVoice === true,
+                    });
+                  } catch (err) {
+                    forgetPendingOutboundMessageId(pendingId);
+                    throw err;
+                  }
+                  lastMessageId = result.messageId;
+                  if (maybeEnqueueOutboundMessageId(result.messageId, cachedBody)) {
+                    forgetPendingOutboundMessageId(pendingId);
+                  }
+                  sentMessage = true;
+                  statusSink?.({ lastOutboundAt: Date.now() });
+                  if (info.kind === "block") {
+                    restartTypingSoon();
+                  }
+                },
+              });
+              emitBlueBubblesMessageSentHooks({
+                sessionKey: route.sessionKey,
+                accountId: account.accountId,
+                to: outboundTarget,
+                content: text,
+                success: true,
+                messageId: lastMessageId,
+                isGroup,
+                groupId: isGroup ? outboundTarget : undefined,
+              });
+            } catch (err) {
+              emitBlueBubblesMessageSentHooks({
+                sessionKey: route.sessionKey,
+                accountId: account.accountId,
+                to: outboundTarget,
+                content: text,
+                success: false,
+                error: err instanceof Error ? err.message : String(err),
+                isGroup,
+                groupId: isGroup ? outboundTarget : undefined,
+              });
+              throw err;
+            }
             return;
           }
 
@@ -1604,35 +1696,61 @@ export async function processMessage(
           if (!chunks.length) {
             return;
           }
-          for (const chunk of chunks) {
-            const pendingId = rememberPendingOutboundMessageId({
-              accountId: account.accountId,
-              sessionKey: route.sessionKey,
-              outboundTarget,
-              chatGuid: chatGuidForActions ?? chatGuid,
-              chatIdentifier,
-              chatId,
-              snippet: chunk,
-            });
-            let result: Awaited<ReturnType<typeof sendMessageBlueBubbles>>;
-            try {
-              result = await sendMessageBlueBubbles(outboundTarget, chunk, {
-                cfg: config,
+          let lastMessageId: string | undefined;
+          try {
+            for (const chunk of chunks) {
+              const pendingId = rememberPendingOutboundMessageId({
                 accountId: account.accountId,
-                replyToMessageGuid: replyToMessageGuid || undefined,
+                sessionKey: route.sessionKey,
+                outboundTarget,
+                chatGuid: chatGuidForActions ?? chatGuid,
+                chatIdentifier,
+                chatId,
+                snippet: chunk,
               });
-            } catch (err) {
-              forgetPendingOutboundMessageId(pendingId);
-              throw err;
+              let result: Awaited<ReturnType<typeof sendMessageBlueBubbles>>;
+              try {
+                result = await sendMessageBlueBubbles(outboundTarget, chunk, {
+                  cfg: config,
+                  accountId: account.accountId,
+                  replyToMessageGuid: replyToMessageGuid || undefined,
+                });
+              } catch (err) {
+                forgetPendingOutboundMessageId(pendingId);
+                throw err;
+              }
+              lastMessageId = result.messageId;
+              if (maybeEnqueueOutboundMessageId(result.messageId, chunk)) {
+                forgetPendingOutboundMessageId(pendingId);
+              }
+              sentMessage = true;
+              statusSink?.({ lastOutboundAt: Date.now() });
+              if (info.kind === "block") {
+                restartTypingSoon();
+              }
             }
-            if (maybeEnqueueOutboundMessageId(result.messageId, chunk)) {
-              forgetPendingOutboundMessageId(pendingId);
-            }
-            sentMessage = true;
-            statusSink?.({ lastOutboundAt: Date.now() });
-            if (info.kind === "block") {
-              restartTypingSoon();
-            }
+            emitBlueBubblesMessageSentHooks({
+              sessionKey: route.sessionKey,
+              accountId: account.accountId,
+              to: outboundTarget,
+              content: text,
+              success: true,
+              messageId: lastMessageId,
+              isGroup,
+              groupId: isGroup ? outboundTarget : undefined,
+            });
+          } catch (err) {
+            emitBlueBubblesMessageSentHooks({
+              sessionKey: route.sessionKey,
+              accountId: account.accountId,
+              to: outboundTarget,
+              content: text,
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+              isGroup,
+              groupId: isGroup ? outboundTarget : undefined,
+            });
+            throw err;
           }
         },
         onReplyStart: typingCallbacks?.onReplyStart,
