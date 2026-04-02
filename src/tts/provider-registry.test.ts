@@ -123,6 +123,8 @@ describe("speech provider registry", () => {
           },
         },
       },
+      cache: false,
+      activate: false,
     });
   });
 
