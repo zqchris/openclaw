@@ -261,7 +261,7 @@ function resolveLazyProviderConfig(
   }
   const rawConfig = resolveRawProviderConfig(config.rawConfig, canonical);
   const resolvedProvider = getSpeechProvider(canonical, effectiveCfg);
-  const next =
+  const resolved =
     effectiveCfg && resolvedProvider?.resolveConfig
       ? resolvedProvider.resolveConfig({
           cfg: effectiveCfg,
@@ -272,6 +272,12 @@ function resolveLazyProviderConfig(
           timeoutMs: config.timeoutMs,
         })
       : rawConfig;
+  // Preserve `enabled` from the raw per-provider config so that isConfigured
+  // checks can honor user intent even when resolveConfig strips unknown fields.
+  const next: SpeechProviderConfig =
+    typeof rawConfig.enabled === "boolean"
+      ? { ...(resolved as Record<string, unknown>), enabled: rawConfig.enabled }
+      : resolved;
   config.providerConfigs[canonical] = next;
   return next;
 }

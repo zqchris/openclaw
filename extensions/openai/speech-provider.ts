@@ -228,6 +228,7 @@ export function buildOpenAISpeechProvider(): SpeechProviderPlugin {
     }),
     listVoices: async () => OPENAI_TTS_VOICES.map((voice) => ({ id: voice, name: voice })),
     isConfigured: ({ providerConfig }) =>
+      (providerConfig as Record<string, unknown> | undefined)?.enabled !== false &&
       Boolean(readOpenAIProviderConfig(providerConfig).apiKey || process.env.OPENAI_API_KEY),
     synthesize: async (req) => {
       const config = readOpenAIProviderConfig(req.providerConfig);

@@ -42,13 +42,17 @@ describe("resolveStatusTtsSnapshot", () => {
   });
 
   it("reports auto provider when tts is on without an explicit provider", async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
+      // Use a path inside the temp home so CONFIG_DIR (module constant) does
+      // not bleed in real-user prefs that may have a provider already set.
+      const prefsPath = path.join(home, ".openclaw", "settings", "tts.json");
       expect(
         resolveStatusTtsSnapshot({
           cfg: {
             messages: {
               tts: {
                 auto: "always",
+                prefsPath,
               },
             },
           } as OpenClawConfig,
