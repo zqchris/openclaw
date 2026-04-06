@@ -63,6 +63,104 @@ function isValidEditReplacement(value: unknown): value is EditReplacement {
   );
 }
 
+function extractStructuredText(value: unknown, depth = 0): string | undefined {
+  if (depth > 3) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (const item of value) {
+      const extracted = extractStructuredText(item, depth + 1);
+      if (typeof extracted === "string") {
+        parts.push(extracted);
+      }
+    }
+    return parts.length > 0 ? parts.join("") : undefined;
+  }
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.text === "string") {
+    return record.text;
+  }
+  if (typeof record.content === "string") {
+    return record.content;
+  }
+  if (Array.isArray(record.content)) {
+    return extractStructuredText(record.content, depth + 1);
+  }
+  if (Array.isArray(record.parts)) {
+    return extractStructuredText(record.parts, depth + 1);
+  }
+  if (typeof record.value === "string" && record.value.length > 0) {
+    const type = typeof record.type === "string" ? record.type.toLowerCase() : "";
+    const kind = typeof record.kind === "string" ? record.kind.toLowerCase() : "";
+    if (type.includes("text") || kind === "text") {
+      return record.value;
+    }
+  }
+  return undefined;
+}
+
+function normalizeTextLikeParam(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  if (typeof value === "string") {
+    return;
+  }
+  const extracted = extractStructuredText(value);
+  if (typeof extracted === "string") {
+    record[key] = extracted;
+  }
+}
+
+function normalizeEditReplacement(value: unknown): EditReplacement | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const normalized = { ...(value as Record<string, unknown>) };
+  normalizeTextLikeParam(normalized, "oldText");
+  normalizeTextLikeParam(normalized, "newText");
+  if (typeof normalized.oldText !== "string" || normalized.oldText.trim().length === 0) {
+    return undefined;
+  }
+  if (typeof normalized.newText !== "string") {
+    return undefined;
+  }
+  return {
+    oldText: normalized.oldText,
+    newText: normalized.newText,
+  };
+}
+
+function normalizeEditReplacements(record: Record<string, unknown>) {
+  const replacements: EditReplacement[] = [];
+  if (Array.isArray(record.edits)) {
+    for (const entry of record.edits) {
+      const normalized = normalizeEditReplacement(entry);
+      if (normalized) {
+        replacements.push(normalized);
+      }
+    }
+  }
+  if (typeof record.oldText === "string" && record.oldText.trim().length > 0) {
+    if (typeof record.newText === "string") {
+      replacements.push({
+        oldText: record.oldText,
+        newText: record.newText,
+      });
+    }
+  }
+  if (replacements.length > 0) {
+    record.edits = replacements;
+    delete record.oldText;
+    delete record.newText;
+  }
+}
+
 function hasValidEditReplacements(record: Record<string, unknown>): boolean {
   const edits = record.edits;
   return (
