@@ -265,7 +265,7 @@ function shouldTreatTelegramDeliveredTextAsVisible(params: {
   text?: string;
 }): boolean {
   void params.text;
-  return params.kind !== "final";
+  return params.kind === "final";
 }
 
 function targetsMatchTelegramReplySuppression(params: {
