@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ConfiguredProviderRequest } from "../config/types.provider-request.js";
 import type { SecretRef } from "../config/types.secrets.js";
 import {
@@ -12,6 +12,23 @@ import {
   sanitizeConfiguredProviderRequest,
   sanitizeRuntimeProviderRequestOverrides,
 } from "./provider-request-config.js";
+
+// Unset OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK for the whole file so
+// default-false assertions aren't polluted by a host machine setting. Tests
+// that intentionally set the env var (e.g. "env var overrides explicit
+// allowPrivateNetwork: false") must set/restore it in their own try/finally.
+let savedEnvAllowPrivateNetwork: string | undefined;
+beforeEach(() => {
+  savedEnvAllowPrivateNetwork = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+});
+afterEach(() => {
+  if (savedEnvAllowPrivateNetwork === undefined) {
+    delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  } else {
+    process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = savedEnvAllowPrivateNetwork;
+  }
+});
 
 describe("provider request config", () => {
   it("merges discovered, provider, and model headers in precedence order", () => {
@@ -532,5 +549,49 @@ describe("provider request config", () => {
       "User-Agent": expect.stringMatching(/^openclaw\//),
       "X-Custom": "1",
     });
+  });
+
+  it("env var overrides explicit allowPrivateNetwork: false", () => {
+    const prev = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+    try {
+      process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = "1";
+      const resolved = resolveProviderRequestPolicyConfig({
+        provider: "xai",
+        baseUrl: "https://api.x.ai/v1",
+        defaultBaseUrl: "https://api.x.ai/v1",
+        allowPrivateNetwork: false,
+        capability: "video",
+        transport: "http",
+      });
+      expect(resolved.allowPrivateNetwork).toBe(true);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+      } else {
+        process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = prev;
+      }
+    }
+  });
+
+  it("allowPrivateNetwork defaults to false without env var", () => {
+    const prev = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+    try {
+      delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+      const resolved = resolveProviderRequestPolicyConfig({
+        provider: "xai",
+        baseUrl: "https://api.x.ai/v1",
+        defaultBaseUrl: "https://api.x.ai/v1",
+        allowPrivateNetwork: false,
+        capability: "video",
+        transport: "http",
+      });
+      expect(resolved.allowPrivateNetwork).toBe(false);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+      } else {
+        process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = prev;
+      }
+    }
   });
 });
