@@ -31,6 +31,7 @@ describe("resolveProviderHttpRequestConfig", () => {
     const resolved = resolveProviderHttpRequestConfig({
       baseUrl: "https://api.openai.com/v1/",
       defaultBaseUrl: "https://api.openai.com/v1",
+      allowPrivateNetwork: true,
       headers: {
         authorization: "Bearer override",
         "User-Agent": "custom-agent/1.0",

@@ -472,6 +472,7 @@ describe("provider request config", () => {
       capability: "llm",
       transport: "stream",
       precedence: "defaults-win",
+      allowPrivateNetwork: true,
     });
 
     expect(resolved.baseUrl).toBe("https://api.openai.com/v1");
@@ -485,5 +486,49 @@ describe("provider request config", () => {
       "User-Agent": expect.stringMatching(/^openclaw\//),
       "X-Custom": "1",
     });
+  });
+
+  it("env var overrides explicit allowPrivateNetwork: false", () => {
+    const prev = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+    try {
+      process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = "1";
+      const resolved = resolveProviderRequestPolicyConfig({
+        provider: "xai",
+        baseUrl: "https://api.x.ai/v1",
+        defaultBaseUrl: "https://api.x.ai/v1",
+        allowPrivateNetwork: false,
+        capability: "video",
+        transport: "http",
+      });
+      expect(resolved.allowPrivateNetwork).toBe(true);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+      } else {
+        process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = prev;
+      }
+    }
+  });
+
+  it("allowPrivateNetwork defaults to false without env var", () => {
+    const prev = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+    try {
+      delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+      const resolved = resolveProviderRequestPolicyConfig({
+        provider: "xai",
+        baseUrl: "https://api.x.ai/v1",
+        defaultBaseUrl: "https://api.x.ai/v1",
+        allowPrivateNetwork: false,
+        capability: "video",
+        transport: "http",
+      });
+      expect(resolved.allowPrivateNetwork).toBe(false);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+      } else {
+        process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = prev;
+      }
+    }
   });
 });
