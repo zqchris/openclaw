@@ -662,7 +662,7 @@ export function resolveProviderRequestPolicyConfig(
     policy,
     capabilities,
     allowPrivateNetwork:
-      params.allowPrivateNetwork ?? process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK === "1",
+      params.allowPrivateNetwork || process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK === "1",
   };
 }
 

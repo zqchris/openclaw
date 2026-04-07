@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchWithSsrFGuardMock } = vi.hoisted(() => ({
   fetchWithSsrFGuardMock: vi.fn(),
@@ -22,8 +22,22 @@ import {
   resolveProviderHttpRequestConfig,
 } from "./shared.js";
 
+// The env var override is intentionally unset for this entire file so
+// that default-false assertions in resolveProviderHttpRequestConfig tests
+// are not polluted by a host machine setting.
+let savedEnvAllowPrivateNetwork: string | undefined;
+beforeEach(() => {
+  savedEnvAllowPrivateNetwork = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+});
+
 afterEach(() => {
   vi.clearAllMocks();
+  if (savedEnvAllowPrivateNetwork === undefined) {
+    delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  } else {
+    process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = savedEnvAllowPrivateNetwork;
+  }
 });
 
 describe("resolveProviderHttpRequestConfig", () => {
