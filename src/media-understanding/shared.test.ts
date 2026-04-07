@@ -41,14 +41,25 @@ import {
   waitProviderOperationPollInterval,
 } from "./shared.js";
 
+// The env var override is intentionally unset for this entire file so
+// that default-false assertions in resolveProviderHttpRequestConfig tests
+// are not polluted by a host machine setting.
+let savedEnvAllowPrivateNetwork: string | undefined;
 beforeEach(() => {
   hasEnvHttpProxyConfiguredMock.mockReturnValue(false);
   matchesNoProxyMock.mockReturnValue(false);
+  savedEnvAllowPrivateNetwork = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
 });
 
 afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
+  if (savedEnvAllowPrivateNetwork === undefined) {
+    delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  } else {
+    process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = savedEnvAllowPrivateNetwork;
+  }
 });
 
 describe("provider operation deadlines", () => {
