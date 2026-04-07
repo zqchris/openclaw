@@ -128,13 +128,12 @@ export function buildGoogleImageGenerationProvider(): ImageGenerationProvider {
       }
 
       const model = normalizeGoogleImageModel(req.model);
-      const { baseUrl, allowPrivateNetwork, headers, dispatcherPolicy } =
-        resolveGoogleGenerativeAiHttpRequestConfig({
-          apiKey: auth.apiKey,
-          baseUrl: req.cfg?.models?.providers?.google?.baseUrl,
-          capability: "image",
-          transport: "http",
-        });
+      const { baseUrl, headers } = resolveGoogleGenerativeAiHttpRequestConfig({
+        apiKey: auth.apiKey,
+        baseUrl: req.cfg?.models?.providers?.google?.baseUrl,
+        capability: "image",
+        transport: "http",
+      });
       const imageConfig = mapSizeToImageConfig(req.size);
       const inputParts = (req.inputImages ?? []).map((image) => ({
         inlineData: {
@@ -168,8 +167,7 @@ export function buildGoogleImageGenerationProvider(): ImageGenerationProvider {
         timeoutMs: 60_000,
         fetchFn: fetch,
         pinDns: false,
-        allowPrivateNetwork,
-        dispatcherPolicy,
+        allowPrivateNetwork: true,
       });
 
       try {
