@@ -128,13 +128,17 @@ export function buildGoogleImageGenerationProvider(): ImageGenerationProvider {
       }
 
       const model = normalizeGoogleImageModel(req.model);
-      const { baseUrl, allowPrivateNetwork, headers, dispatcherPolicy } =
-        resolveGoogleGenerativeAiHttpRequestConfig({
-          apiKey: auth.apiKey,
-          baseUrl: req.cfg?.models?.providers?.google?.baseUrl,
-          capability: "image",
-          transport: "http",
-        });
+      // dispatcherPolicy intentionally dropped: undici pinned dispatcher
+      // interacts badly with Surge/TUN split routing for image generation.
+      // allowPrivateNetwork is still honored via the resolved config, and
+      // the OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK env var provides a
+      // global override for TUN environments.
+      const { baseUrl, allowPrivateNetwork, headers } = resolveGoogleGenerativeAiHttpRequestConfig({
+        apiKey: auth.apiKey,
+        baseUrl: req.cfg?.models?.providers?.google?.baseUrl,
+        capability: "image",
+        transport: "http",
+      });
       const imageConfig = mapSizeToImageConfig(req.size);
       const inputParts = (req.inputImages ?? []).map((image) => ({
         inlineData: {
@@ -169,7 +173,6 @@ export function buildGoogleImageGenerationProvider(): ImageGenerationProvider {
         fetchFn: fetch,
         pinDns: false,
         allowPrivateNetwork,
-        dispatcherPolicy,
       });
 
       try {
