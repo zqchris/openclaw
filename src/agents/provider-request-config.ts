@@ -659,7 +659,10 @@ export function resolveProviderRequestPolicyConfig(
     tls: resolveTlsOverride(params.request?.tls),
     policy,
     capabilities,
-    allowPrivateNetwork: params.allowPrivateNetwork ?? params.request?.allowPrivateNetwork ?? false,
+    allowPrivateNetwork:
+      params.allowPrivateNetwork ??
+      params.request?.allowPrivateNetwork ??
+      process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK === "1",
   };
 }
 
