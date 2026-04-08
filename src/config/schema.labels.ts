@@ -763,7 +763,6 @@ export const FIELD_LABELS: Record<string, string> = {
   "channels.defaults.heartbeat.useIndicator": "Heartbeat Use Indicator",
   "channels.mattermost": "Mattermost",
   "channels.modelByChannel": "Channel Model Overrides",
-  ...IRC_FIELD_LABELS,
   "channels.telegram.botToken": "Telegram Bot Token",
   "channels.telegram.dmPolicy": "Telegram DM Policy",
   "channels.telegram.configWrites": "Telegram Config Writes",
