@@ -42,6 +42,7 @@ import {
 } from "./memory-embedding-providers.js";
 import {
   clearMemoryPluginState,
+  getMemoryCapabilityRegistration,
   getMemoryFlushPlanResolver,
   getMemoryPromptSectionBuilder,
   getMemoryRuntime,
@@ -148,6 +149,7 @@ export class PluginLoadReentryError extends Error {
 
 type CachedPluginState = {
   registry: PluginRegistry;
+  memoryCapability: ReturnType<typeof getMemoryCapabilityRegistration>;
   memoryCorpusSupplements: ReturnType<typeof listMemoryCorpusSupplements>;
   compactionProviders: ReturnType<typeof listRegisteredCompactionProviders>;
   memoryEmbeddingProviders: ReturnType<typeof listRegisteredMemoryEmbeddingProviders>;
@@ -1109,6 +1111,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       restoreRegisteredCompactionProviders(cached.compactionProviders);
       restoreRegisteredMemoryEmbeddingProviders(cached.memoryEmbeddingProviders);
       restoreMemoryPluginState({
+        capability: cached.memoryCapability,
         corpusSupplements: cached.memoryCorpusSupplements,
         promptBuilder: cached.memoryPromptBuilder,
         promptSupplements: cached.memoryPromptSupplements,
@@ -1712,6 +1715,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       });
       const previousCompactionProviders = listRegisteredCompactionProviders();
       const previousMemoryEmbeddingProviders = listRegisteredMemoryEmbeddingProviders();
+      const previousMemoryCapability = getMemoryCapabilityRegistration();
       const previousMemoryFlushPlanResolver = getMemoryFlushPlanResolver();
       const previousMemoryPromptBuilder = getMemoryPromptSectionBuilder();
       const previousMemoryCorpusSupplements = listMemoryCorpusSupplements();
@@ -1733,6 +1737,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
           restoreRegisteredCompactionProviders(previousCompactionProviders);
           restoreRegisteredMemoryEmbeddingProviders(previousMemoryEmbeddingProviders);
           restoreMemoryPluginState({
+            capability: previousMemoryCapability,
             corpusSupplements: previousMemoryCorpusSupplements,
             promptBuilder: previousMemoryPromptBuilder,
             promptSupplements: previousMemoryPromptSupplements,
@@ -1746,6 +1751,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
         restoreRegisteredCompactionProviders(previousCompactionProviders);
         restoreRegisteredMemoryEmbeddingProviders(previousMemoryEmbeddingProviders);
         restoreMemoryPluginState({
+          capability: previousMemoryCapability,
           corpusSupplements: previousMemoryCorpusSupplements,
           promptBuilder: previousMemoryPromptBuilder,
           promptSupplements: previousMemoryPromptSupplements,
@@ -1800,6 +1806,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
 
     if (cacheEnabled) {
       setCachedPluginRegistry(cacheKey, {
+        memoryCapability: getMemoryCapabilityRegistration(),
         memoryCorpusSupplements: listMemoryCorpusSupplements(),
         registry,
         compactionProviders: listRegisteredCompactionProviders(),
