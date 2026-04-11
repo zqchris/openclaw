@@ -156,7 +156,17 @@ export async function buildReplyPayloads(params: {
       }),
     )
   ).filter(isRenderablePayload);
-  const silentFilteredPayloads = params.silentExpected ? [] : replyTaggedPayloads;
+  // Allow media-only payloads (especially audio/voice) through silent turns.
+  // When an agent uses NO_REPLY as its text reply but also produced tool media
+  // like TTS audio, the audio should still be delivered — silent only suppresses
+  // the text portion, not the media.
+  const silentFilteredPayloads = params.silentExpected
+    ? replyTaggedPayloads.filter((p) => {
+        const hasMedia = (p.mediaUrls?.length ?? 0) > 0 || Boolean(p.mediaUrl);
+        const isAudioReply = p.audioAsVoice === true;
+        return hasMedia || isAudioReply;
+      })
+    : replyTaggedPayloads;
 
   // Drop final payloads only when block streaming succeeded end-to-end.
   // If streaming aborted (e.g., timeout), fall back to final payloads.
