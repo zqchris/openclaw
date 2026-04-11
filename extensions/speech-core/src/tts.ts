@@ -593,7 +593,14 @@ export function setLastTtsAttempt(entry: TtsStatusEntry | undefined): void {
   lastTtsAttempt = entry;
 }
 
-const OPUS_CHANNELS = new Set(["telegram", "feishu", "whatsapp", "matrix", "discord"]);
+const OPUS_CHANNELS = new Set([
+  "telegram",
+  "feishu",
+  "whatsapp",
+  "matrix",
+  "discord",
+  "bluebubbles",
+]);
 
 function resolveChannelId(channel: string | undefined): ChannelId | null {
   return channel ? normalizeChannelId(channel) : null;
