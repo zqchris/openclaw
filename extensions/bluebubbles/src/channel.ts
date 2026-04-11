@@ -331,12 +331,13 @@ export const bluebubblesPlugin: ChannelPlugin<ResolvedBlueBubblesAccount, BlueBu
         sendMedia: async (ctx) => {
           const runtime = await loadBlueBubblesChannelRuntime();
           const { cfg, to, text, mediaUrl, accountId, replyToId } = ctx;
-          const { mediaPath, mediaBuffer, contentType, filename, caption } = ctx as {
+          const { mediaPath, mediaBuffer, contentType, filename, caption, audioAsVoice } = ctx as {
             mediaPath?: string;
             mediaBuffer?: Uint8Array;
             contentType?: string;
             filename?: string;
             caption?: string;
+            audioAsVoice?: boolean;
           };
           return await runtime.sendBlueBubblesMedia({
             cfg: cfg,
@@ -349,6 +350,7 @@ export const bluebubblesPlugin: ChannelPlugin<ResolvedBlueBubblesAccount, BlueBu
             caption: caption ?? text ?? undefined,
             replyToId: replyToId ?? null,
             accountId: accountId ?? undefined,
+            asVoice: audioAsVoice ?? undefined,
           });
         },
       },
