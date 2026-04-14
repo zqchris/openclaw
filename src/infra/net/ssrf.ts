@@ -240,15 +240,25 @@ export function isPrivateIpAddress(address: string, policy?: SsrFPolicy): boolea
   return false;
 }
 
-export function isBlockedHostname(hostname: string): boolean {
+export function isBlockedHostname(hostname: string, policy?: SsrFPolicy): boolean {
   const normalized = normalizeHostname(hostname);
   if (!normalized) {
     return false;
   }
-  return isBlockedHostnameNormalized(normalized);
+  return isBlockedHostnameNormalized(normalized, policy);
 }
 
-function isBlockedHostnameNormalized(normalized: string): boolean {
+function isBlockedHostnameNormalized(normalized: string, policy?: SsrFPolicy): boolean {
+  // When a caller explicitly opts into private-network access (e.g. BlueBubbles
+  // Private API at localhost:1234), treat the loopback/local hostname family
+  // the same as the private-IP ranges and let the request through. Outbound
+  // defenses still rely on the caller setting this flag intentionally; the
+  // default-no-policy path keeps blocking inbound link-understanding fetches.
+  const allowPrivateNetwork =
+    policy?.allowPrivateNetwork === true || policy?.dangerouslyAllowPrivateNetwork === true;
+  if (allowPrivateNetwork) {
+    return false;
+  }
   if (BLOCKED_HOSTNAMES.has(normalized)) {
     return true;
   }
@@ -264,7 +274,7 @@ export function isBlockedHostnameOrIp(hostname: string, policy?: SsrFPolicy): bo
   if (!normalized) {
     return false;
   }
-  return isBlockedHostnameNormalized(normalized) || isPrivateIpAddress(normalized, policy);
+  return isBlockedHostnameNormalized(normalized, policy) || isPrivateIpAddress(normalized, policy);
 }
 
 const BLOCKED_HOST_OR_IP_MESSAGE = "Blocked hostname or private/internal/special-use IP address";
