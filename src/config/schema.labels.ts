@@ -78,6 +78,10 @@ export const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.contextLimits.memoryGetMaxChars": "Default memory_get Max Chars",
   "agents.defaults.contextLimits.memoryGetDefaultLines": "Default memory_get Line Window",
   "agents.defaults.contextLimits.toolResultMaxChars": "Default Tool Result Max Chars",
+  "agents.defaults.contextLimits.toolResultDetailsPersist":
+    "Default Tool Result Details Persistence",
+  "agents.defaults.contextLimits.toolResultDetailsMaxChars":
+    "Default Tool Result Details Max Chars",
   "agents.defaults.contextLimits.postCompactionMaxChars": "Default Post-compaction Max Chars",
   "agents.defaults.embeddedHarness": "Default Agent Runtime Settings",
   "agents.defaults.embeddedHarness.runtime": "Default Agent Runtime",
@@ -89,6 +93,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "agents.list[].contextLimits.memoryGetMaxChars": "Agent memory_get Max Chars",
   "agents.list[].contextLimits.memoryGetDefaultLines": "Agent memory_get Line Window",
   "agents.list[].contextLimits.toolResultMaxChars": "Agent Tool Result Max Chars",
+  "agents.list[].contextLimits.toolResultDetailsPersist": "Agent Tool Result Details Persistence",
+  "agents.list[].contextLimits.toolResultDetailsMaxChars": "Agent Tool Result Details Max Chars",
   "agents.list[].contextLimits.postCompactionMaxChars": "Agent Post-compaction Max Chars",
   "agents.list.*.embeddedHarness": "Agent Embedded Harness",
   "agents.list.*.embeddedHarness.runtime": "Agent Runtime",
