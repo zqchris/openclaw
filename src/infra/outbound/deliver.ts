@@ -439,7 +439,7 @@ async function applyMessageSendingHook(params: {
     const sendingResult = await params.hookRunner!.runMessageSending(
       {
         to: params.to,
-        content: params.payloadSummary.text,
+        content: params.payloadSummary.hookContent ?? params.payloadSummary.text,
         metadata: {
           channel: params.channel,
           accountId: params.accountId,
@@ -700,7 +700,7 @@ async function deliverOutboundPayloadsCore(
         results.push(delivery);
         emitMessageSent({
           success: true,
-          content: payloadSummary.text,
+          content: payloadSummary.hookContent ?? payloadSummary.text,
           messageId: delivery.messageId,
         });
         continue;
@@ -715,7 +715,7 @@ async function deliverOutboundPayloadsCore(
         const messageId = results.at(-1)?.messageId;
         emitMessageSent({
           success: results.length > beforeCount,
-          content: payloadSummary.text,
+          content: payloadSummary.hookContent ?? payloadSummary.text,
           messageId,
         });
         continue;
@@ -741,7 +741,7 @@ async function deliverOutboundPayloadsCore(
         const messageId = results.at(-1)?.messageId;
         emitMessageSent({
           success: results.length > beforeCount,
-          content: payloadSummary.text,
+          content: payloadSummary.hookContent ?? payloadSummary.text,
           messageId,
         });
         continue;
@@ -770,13 +770,13 @@ async function deliverOutboundPayloadsCore(
       });
       emitMessageSent({
         success: true,
-        content: payloadSummary.text,
+        content: payloadSummary.hookContent ?? payloadSummary.text,
         messageId: lastMessageId,
       });
     } catch (err) {
       emitMessageSent({
         success: false,
-        content: payloadSummary.text,
+        content: payloadSummary.hookContent ?? payloadSummary.text,
         error: formatErrorMessage(err),
       });
       if (!params.bestEffort) {
