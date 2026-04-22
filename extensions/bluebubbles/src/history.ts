@@ -1,6 +1,7 @@
 import { resolveBlueBubblesServerAccount } from "./account-resolve.js";
 import { createBlueBubblesClientFromParts } from "./client.js";
 import type { OpenClawConfig } from "./runtime-api.js";
+import { blueBubblesFetchWithTimeout, buildBlueBubblesApiUrl } from "./types.js";
 
 export type BlueBubblesHistoryEntry = {
   sender: string;
