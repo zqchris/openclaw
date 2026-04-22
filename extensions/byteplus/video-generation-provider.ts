@@ -18,7 +18,7 @@ import type {
 import { BYTEPLUS_BASE_URL } from "./models.js";
 
 const DEFAULT_BYTEPLUS_VIDEO_MODEL = "seedance-1-0-lite-t2v-250428";
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for 2.0 generation
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_ATTEMPTS = 120;
 
@@ -141,6 +141,9 @@ export function buildBytePlusVideoGenerationProvider(): VideoGenerationProvider 
       "seedance-1-0-lite-i2v-250428",
       "seedance-1-0-pro-250528",
       "seedance-1-5-pro-251215",
+      // Seedance 2.0 via company proxy endpoint (doubao-* model IDs)
+      "doubao-seedance-2-0-260128",
+      "doubao-seedance-2-0-fast-260128",
     ],
     isConfigured: ({ agentDir }) =>
       isProviderApiKeyConfigured({
@@ -257,7 +260,10 @@ export function buildBytePlusVideoGenerationProvider(): VideoGenerationProvider 
       const seed = typeof opts.seed === "number" ? opts.seed : undefined;
       const draft = opts.draft === true;
       // Official JSON body field is camera_fixed (with underscore).
-      const cameraFixed = typeof opts.camera_fixed === "boolean" ? opts.camera_fixed : undefined;
+      // Seedance 2.0 does not support camera_fixed; skip it for 2.0 models.
+      const isSeedance2 = resolvedModel.includes("doubao-seedance-2-0");
+      const cameraFixed =
+        !isSeedance2 && typeof opts.camera_fixed === "boolean" ? opts.camera_fixed : undefined;
       if (seed != null) {
         body.seed = seed;
       }
