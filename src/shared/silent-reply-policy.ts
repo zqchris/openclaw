@@ -70,6 +70,9 @@ export function classifySilentReplyConversationType(params: {
   if (normalizedSessionKey.includes(":group:") || normalizedSessionKey.includes(":channel:")) {
     return "group";
   }
+  if (normalizedSessionKey.includes(":thread:")) {
+    return "internal";
+  }
   if (normalizedSessionKey.includes(":direct:") || normalizedSessionKey.includes(":dm:")) {
     return "direct";
   }
