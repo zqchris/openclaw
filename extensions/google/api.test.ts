@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   isGoogleGenerativeAiApi,
   normalizeGoogleApiBaseUrl,
@@ -12,6 +12,16 @@ import {
 } from "./api.js";
 
 describe("google generative ai helpers", () => {
+  const SAVED_ALLOW_PRIVATE = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  beforeAll(() => {
+    delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  });
+  afterAll(() => {
+    if (SAVED_ALLOW_PRIVATE !== undefined) {
+      process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = SAVED_ALLOW_PRIVATE;
+    }
+  });
+
   it("detects the Google Generative AI transport id", () => {
     expect(isGoogleGenerativeAiApi("google-generative-ai")).toBe(true);
     expect(isGoogleGenerativeAiApi("google-gemini-cli")).toBe(false);
