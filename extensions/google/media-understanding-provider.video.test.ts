@@ -1,5 +1,5 @@
 import { withFetchPreconnect } from "openclaw/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createRequestCaptureJsonFetch,
   installPinnedHostnameTestHooks,
@@ -10,6 +10,16 @@ import { resolveGoogleGenerativeAiHttpRequestConfig } from "./runtime-api.js";
 installPinnedHostnameTestHooks();
 
 describe("describeGeminiVideo", () => {
+  const SAVED_ALLOW_PRIVATE = process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  beforeAll(() => {
+    delete process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK;
+  });
+  afterAll(() => {
+    if (SAVED_ALLOW_PRIVATE !== undefined) {
+      process.env.OPENCLAW_PROVIDER_ALLOW_PRIVATE_NETWORK = SAVED_ALLOW_PRIVATE;
+    }
+  });
+
   it("respects case-insensitive x-goog-api-key overrides", async () => {
     let seenKey: string | null = null;
     const fetchFn = withFetchPreconnect(async (_input: RequestInfo | URL, init?: RequestInit) => {
