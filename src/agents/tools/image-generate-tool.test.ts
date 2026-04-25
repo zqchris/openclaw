@@ -508,7 +508,7 @@ describe("createImageGenerateTool", () => {
     expect(text).toContain("MEDIA:/tmp/generated-2.png");
   });
 
-  it("uses configured timeoutMs for image generation and lets calls override it", async () => {
+  it("uses configured timeoutMs for image generation and ignores model-supplied timeoutMs", async () => {
     stubImageGenerationProviders();
     const generateImage = vi.spyOn(imageGenerationRuntime, "generateImage").mockResolvedValue({
       provider: "openai",
@@ -559,14 +559,17 @@ describe("createImageGenerateTool", () => {
         timeoutMs: 180_000,
       }),
     );
+    // Model-supplied timeoutMs is intentionally ignored to prevent the model
+    // from pinning a too-short request timeout that aborts legitimate
+    // long-running image generations (042f8fa6b8 / PR #72177).
     expect(generateImage).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        timeoutMs: 12_345,
+        timeoutMs: 180_000,
       }),
     );
     expect(defaultResult.details).toMatchObject({ timeoutMs: 180_000 });
-    expect(overrideResult.details).toMatchObject({ timeoutMs: 12_345 });
+    expect(overrideResult.details).toMatchObject({ timeoutMs: 180_000 });
   });
 
   it("forwards output hints and OpenAI provider options", async () => {
