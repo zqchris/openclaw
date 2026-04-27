@@ -263,6 +263,65 @@ export function stripToolResultDetails(messages: AgentMessage[]): AgentMessage[]
   return touched ? out : messages;
 }
 
+/**
+ * Strip a trailing assistant message that has no usable content.
+ *
+ * v2026.4.25 (#71880) treats `stopReason=stop` with empty payloads as a failed
+ * provider output and triggers model fallback instead of preserving it as a
+ * silent reply. The session jsonl is repaired on disk via
+ * session-file-repair.ts, but the in-memory message array passed to the
+ * fallback model still contains the empty assistant turn. LiteLLM/Vertex-routed
+ * Claude rejects this with `400: This model does not support assistant
+ * message prefill. The conversation must end with a user message.` Anthropic
+ * direct accepts the prefill so the bug only surfaces on Vertex-backed routes.
+ *
+ * No-op when the conversation does not end with an empty assistant turn —
+ * normal attempts always end with a user or tool-result message before the
+ * next assistant turn is generated.
+ */
+export function stripTrailingEmptyAssistantTurn(messages: AgentMessage[]): AgentMessage[] {
+  if (messages.length === 0) {
+    return messages;
+  }
+  const last = messages[messages.length - 1];
+  if (!last || typeof last !== "object" || (last as { role?: unknown }).role !== "assistant") {
+    return messages;
+  }
+  if (!isEmptyAssistantContent((last as { content?: unknown }).content)) {
+    return messages;
+  }
+  return messages.slice(0, -1);
+}
+
+function isEmptyAssistantContent(content: unknown): boolean {
+  if (content == null) {
+    return true;
+  }
+  if (typeof content === "string") {
+    return content.trim().length === 0;
+  }
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  if (content.length === 0) {
+    return true;
+  }
+  return content.every((block) => isEmptyAssistantContentBlock(block));
+}
+
+function isEmptyAssistantContentBlock(block: unknown): boolean {
+  if (!block || typeof block !== "object") {
+    return true;
+  }
+  const record = block as { type?: unknown; text?: unknown };
+  if (record.type === "text") {
+    return typeof record.text !== "string" || record.text.trim().length === 0;
+  }
+  // tool_use, image, and other structured blocks count as real content; do not
+  // strip an assistant turn that already produced a tool call or other payload.
+  return false;
+}
+
 export function repairToolCallInputs(
   messages: AgentMessage[],
   options?: ToolCallInputRepairOptions,
