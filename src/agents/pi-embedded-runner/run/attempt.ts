@@ -2874,6 +2874,19 @@ export async function runEmbeddedAttempt(
             if (normalizedReplayMessages !== activeSession.messages) {
               activeSession.agent.state.messages = normalizedReplayMessages;
             }
+            // Safety net: pi-agent-core auto-retry and fallback dispatch can
+            // append a fresh empty/error assistant turn to activeSession.messages
+            // between the upstream filterHeartbeatPairs strip
+            // (~prePromptMessageCount setup) and this prompt submission, so
+            // re-run stripTrailingEmptyAssistantTurn here to keep the
+            // conversation tail user-only when handed to the next provider.
+            // Required for LiteLLM/Vertex-routed Claude which rejects any
+            // conversation ending in an assistant message
+            // (real-world recurrence at 02:12 in cron run after 30b1bda133).
+            const replaySafeMessages = stripTrailingEmptyAssistantTurn(activeSession.messages);
+            if (replaySafeMessages.length < activeSession.messages.length) {
+              activeSession.agent.state.messages = replaySafeMessages;
+            }
             finalPromptText = promptSubmission.prompt;
             trajectoryRecorder?.recordEvent("prompt.submitted", {
               prompt: promptSubmission.prompt,
