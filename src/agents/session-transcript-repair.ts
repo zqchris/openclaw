@@ -263,20 +263,40 @@ export function stripToolResultDetails(messages: AgentMessage[]): AgentMessage[]
   return touched ? out : messages;
 }
 
+// Sentinel text used by session-file-repair.ts (rewriteAssistantEntryWithEmptyContent)
+// when an empty assistant turn with stopReason=error is rewritten on disk into
+// a non-empty placeholder for AWS Bedrock Converse compatibility. We need to
+// recognize this sentinel so the in-memory strip below treats the rewritten
+// turn as empty for fallback-prefill purposes. Kept in sync with
+// STREAM_ERROR_FALLBACK_TEXT in stream-message-shared.ts; duplicating the
+// literal avoids a hot-path import cycle (session-transcript-repair is loaded
+// before stream-message-shared in attempt.ts boot).
+const STREAM_ERROR_FALLBACK_TEXT_LITERAL = "[assistant turn failed before producing content]";
+
 /**
- * Strip a trailing assistant message that has no usable content.
+ * Strip a trailing assistant message that has no usable content for prefill.
  *
  * v2026.4.25 (#71880) treats `stopReason=stop` with empty payloads as a failed
  * provider output and triggers model fallback instead of preserving it as a
  * silent reply. The session jsonl is repaired on disk via
  * session-file-repair.ts, but the in-memory message array passed to the
- * fallback model still contains the empty assistant turn. LiteLLM/Vertex-routed
- * Claude rejects this with `400: This model does not support assistant
- * message prefill. The conversation must end with a user message.` Anthropic
- * direct accepts the prefill so the bug only surfaces on Vertex-backed routes.
+ * fallback model still contains the empty/sentinel assistant turn.
+ * LiteLLM/Vertex-routed Claude rejects any conversation ending with an
+ * assistant message with `400: This model does not support assistant message
+ * prefill. The conversation must end with a user message.` Anthropic direct
+ * accepts the prefill so the bug only surfaces on Vertex-backed routes.
  *
- * No-op when the conversation does not end with an empty assistant turn —
- * normal attempts always end with a user or tool-result message before the
+ * "No usable content for prefill" means any of:
+ *   - assistant turn with `stopReason="error"` (always strip; the
+ *     disk-repaired sentinel-text shape lives here, see
+ *     rewriteAssistantEntryWithEmptyContent in session-file-repair.ts)
+ *   - empty content array, null/undefined content, empty string content
+ *   - content array whose only blocks are whitespace-only text or the
+ *     STREAM_ERROR_FALLBACK_TEXT sentinel
+ *
+ * No-op when the trailing assistant turn has real content (text, tool call,
+ * image, etc.) or when the conversation does not end with an assistant turn.
+ * Normal attempts always end with a user or tool-result message before the
  * next assistant turn is generated.
  */
 export function stripTrailingEmptyAssistantTurn(messages: AgentMessage[]): AgentMessage[] {
@@ -286,6 +306,9 @@ export function stripTrailingEmptyAssistantTurn(messages: AgentMessage[]): Agent
   const last = messages[messages.length - 1];
   if (!last || typeof last !== "object" || (last as { role?: unknown }).role !== "assistant") {
     return messages;
+  }
+  if ((last as { stopReason?: unknown }).stopReason === "error") {
+    return messages.slice(0, -1);
   }
   if (!isEmptyAssistantContent((last as { content?: unknown }).content)) {
     return messages;
@@ -298,7 +321,8 @@ function isEmptyAssistantContent(content: unknown): boolean {
     return true;
   }
   if (typeof content === "string") {
-    return content.trim().length === 0;
+    const trimmed = content.trim();
+    return trimmed.length === 0 || trimmed === STREAM_ERROR_FALLBACK_TEXT_LITERAL;
   }
   if (!Array.isArray(content)) {
     return false;
@@ -315,7 +339,11 @@ function isEmptyAssistantContentBlock(block: unknown): boolean {
   }
   const record = block as { type?: unknown; text?: unknown };
   if (record.type === "text") {
-    return typeof record.text !== "string" || record.text.trim().length === 0;
+    if (typeof record.text !== "string") {
+      return true;
+    }
+    const trimmed = record.text.trim();
+    return trimmed.length === 0 || trimmed === STREAM_ERROR_FALLBACK_TEXT_LITERAL;
   }
   // tool_use, image, and other structured blocks count as real content; do not
   // strip an assistant turn that already produced a tool call or other payload.

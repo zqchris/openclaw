@@ -881,4 +881,62 @@ describe("stripTrailingEmptyAssistantTurn", () => {
     const out = stripTrailingEmptyAssistantTurn(input);
     expect(out).toBe(input);
   });
+
+  it("strips a trailing assistant turn with stopReason='error' even when content is the disk-repaired sentinel text", () => {
+    // session-file-repair.ts rewrites empty stopReason=error turns into this
+    // sentinel on disk for AWS Bedrock Converse compat. The in-memory replay
+    // must still strip them before fallback dispatch — Vertex-routed Claude
+    // rejects ANY conversation ending with an assistant message regardless of
+    // whether the content is "real".
+    const input = castAgentMessages([
+      { role: "user", content: "ping" },
+      castAgentMessage({
+        role: "assistant",
+        stopReason: "error",
+        content: [{ type: "text", text: "[assistant turn failed before producing content]" }],
+      }),
+    ]);
+    const out = stripTrailingEmptyAssistantTurn(input);
+    expect(out).toHaveLength(1);
+    expect((out[0] ?? {}).role).toBe("user");
+  });
+
+  it("strips a trailing assistant turn with stopReason='error' even when content has arbitrary text", () => {
+    // Defense-in-depth: any assistant turn marked stopReason=error is by
+    // definition a failed turn that should not be presented to a fallback
+    // model as a usable assistant prefill, regardless of repair sentinel.
+    const input = castAgentMessages([
+      { role: "user", content: "ping" },
+      castAgentMessage({
+        role: "assistant",
+        stopReason: "error",
+        content: [{ type: "text", text: "partial output before crash" }],
+      }),
+    ]);
+    const out = stripTrailingEmptyAssistantTurn(input);
+    expect(out).toHaveLength(1);
+  });
+
+  it("strips a trailing assistant turn whose only block is the stream-error sentinel text", () => {
+    // Same on-disk shape but without the stopReason marker (rewriter sets
+    // stopReason=error, but defensive against future variants).
+    const input = castAgentMessages([
+      { role: "user", content: "ping" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "[assistant turn failed before producing content]" }],
+      },
+    ]);
+    const out = stripTrailingEmptyAssistantTurn(input);
+    expect(out).toHaveLength(1);
+  });
+
+  it("does not strip a healthy assistant turn that has stopReason undefined and real text", () => {
+    const input = castAgentMessages([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: [{ type: "text", text: "hello there" }] },
+    ]);
+    const out = stripTrailingEmptyAssistantTurn(input);
+    expect(out).toBe(input);
+  });
 });
