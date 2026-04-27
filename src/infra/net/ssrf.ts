@@ -128,6 +128,21 @@ const BLOCKED_HOSTNAMES = new Set([
   "metadata.google.internal",
 ]);
 
+// Hostnames that map to cloud-instance metadata services (IAM credentials,
+// instance roles, etc.) stay blocked even when the caller opts into
+// `allowPrivateNetwork` / `dangerouslyAllowPrivateNetwork`. These endpoints
+// look like "private network" technically (link-local IP / `.internal`
+// domain) but exposing them bypasses the cloud workload IAM boundary
+// (CWE-918 SSRF → credential theft). Add to this set when more cloud
+// providers expose hostname-based metadata access; IP-based metadata
+// (169.254.169.254 etc.) is covered by the link-local check in
+// isPrivateIpAddress.
+const ALWAYS_BLOCKED_CLOUD_METADATA_HOSTNAMES = new Set(["metadata.google.internal"]);
+
+// Loopback aliases that are safe to permit when allowPrivateNetwork is set
+// (e.g. BlueBubbles Private API at localhost:1234, local LiteLLM proxies).
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "localhost.localdomain"]);
+
 function normalizeHostnameSet(values?: string[]): Set<string> {
   if (!values || values.length === 0) {
     return new Set<string>();
@@ -249,16 +264,39 @@ export function isBlockedHostname(hostname: string, policy?: SsrFPolicy): boolea
 }
 
 function isBlockedHostnameNormalized(normalized: string, policy?: SsrFPolicy): boolean {
-  // When a caller explicitly opts into private-network access (e.g. BlueBubbles
-  // Private API at localhost:1234), treat the loopback/local hostname family
-  // the same as the private-IP ranges and let the request through. Outbound
-  // defenses still rely on the caller setting this flag intentionally; the
-  // default-no-policy path keeps blocking inbound link-understanding fetches.
+  // Cloud-instance metadata endpoints stay blocked even with
+  // allowPrivateNetwork — they expose IAM credentials and the SSRF policy
+  // surface should not be widened by accident. See
+  // ALWAYS_BLOCKED_CLOUD_METADATA_HOSTNAMES.
+  if (ALWAYS_BLOCKED_CLOUD_METADATA_HOSTNAMES.has(normalized)) {
+    return true;
+  }
+
   const allowPrivateNetwork =
     policy?.allowPrivateNetwork === true || policy?.dangerouslyAllowPrivateNetwork === true;
   if (allowPrivateNetwork) {
+    // Pass loopback aliases and `.localhost` / `.local` (mDNS) suffixes —
+    // these are the legitimate use cases for opting into private network
+    // access (BlueBubbles Private API, local LiteLLM proxies, mDNS-bound
+    // services on the home LAN).
+    if (LOOPBACK_HOSTNAMES.has(normalized)) {
+      return false;
+    }
+    if (normalized.endsWith(".localhost") || normalized.endsWith(".local")) {
+      return false;
+    }
+    // `.internal` stays blocked: the suffix is heavily reused by cloud
+    // metadata (e.g. `*.compute.internal`, `metadata.google.internal`) and
+    // by enterprise reserved domains. allowPrivateNetwork is meant for
+    // "I want my LAN service" not "I want internal cloud namespaces".
+    if (normalized.endsWith(".internal")) {
+      return true;
+    }
+    // Other hostnames (public DNS, RFC1918 IPs reached by hostname) are
+    // permitted; isPrivateIpAddress still gets to weigh in via the caller.
     return false;
   }
+
   if (BLOCKED_HOSTNAMES.has(normalized)) {
     return true;
   }
