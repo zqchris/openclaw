@@ -143,6 +143,7 @@ import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js"
 import {
   sanitizeToolUseResultPairing,
   stripToolResultDetails,
+  stripTrailingEmptyAssistantTurn,
 } from "../../session-transcript-repair.js";
 import {
   acquireSessionWriteLock,
@@ -3114,6 +3115,16 @@ export async function runEmbeddedAttempt(
           );
           if (filteredMessages.length < activeSession.messages.length) {
             activeSession.agent.state.messages = filteredMessages;
+          }
+          // Drop an in-memory trailing empty assistant turn left behind by a
+          // prior attempt's empty-stop failure (v2026.4.25 #71880 surfaces this
+          // by triggering model fallback instead of keeping the silent reply).
+          // session-file-repair.ts handles the jsonl on disk; this catches the
+          // in-flight message array so fallback models that reject assistant
+          // prefill (LiteLLM via Vertex) get a clean conversation.
+          const cleanedMessages = stripTrailingEmptyAssistantTurn(activeSession.messages);
+          if (cleanedMessages.length < activeSession.messages.length) {
+            activeSession.agent.state.messages = cleanedMessages;
           }
           prePromptMessageCount = activeSession.messages.length;
 
