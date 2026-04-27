@@ -8,6 +8,7 @@ Docs: https://docs.openclaw.ai
 
 - Channels/Yuanbao: register the Tencent Yuanbao external channel plugin (`openclaw-plugin-yuanbao`) in the official channel catalog, contract suites, and community plugin docs, with a new `docs/channels/yuanbao.md` quick-start guide for WebSocket bot DMs and group chats. (#72756) Thanks @loongfay.
 - Channels/QQBot: add full group chat support (history tracking, @-mention gating, activation modes, per-group config, FIFO message queue with deliver debounce), C2C `stream_messages` streaming with a `StreamingController` lifecycle manager, unified `sendMedia` with chunked upload for large files, and refactor the engine into pipeline stages, focused outbound submodules, builtin slash-command modules, and explicit DI ports via `createEngineAdapters()`. (#70624) Thanks @cxyhhhhh.
+- Memory-core/Dreaming: classify rotated cron and dreaming-narrative session transcripts (`*.jsonl.deleted.<ts>`, `*.jsonl.reset.<ts>`, `*.trajectory.jsonl[.deleted.<ts>]`) by session id instead of live `sessionFile` path so isolated cron runs no longer leak into `memory/.dreams/session-corpus/` after rotation, and add `dreaming.sessionFilter.{excludeCronJobIds,excludeSessionKeyPrefixes,excludeAgentIds,excludeSourcePathRegex}` operator-facing exclusion knobs. Fixes #72611. Thanks @zqchris.
 
 ## 2026.4.26
 

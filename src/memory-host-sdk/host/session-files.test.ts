@@ -2,7 +2,15 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { buildSessionEntry, listSessionFilesForAgent } from "./session-files.js";
+import {
+  buildSessionEntry,
+  extractSessionIdFromTranscriptFileName,
+  isCronRunTranscriptPath,
+  isDreamingNarrativeTranscriptPath,
+  listSessionFilesForAgent,
+  loadSessionTranscriptClassificationForSessionsDir,
+  lookupSessionKeyForTranscriptPath,
+} from "./session-files.js";
 
 let fixtureRoot: string;
 let tmpDir: string;
@@ -706,5 +714,201 @@ describe("buildSessionEntry", () => {
     expect(entry?.generatedByDreamingNarrative).toBeUndefined();
     expect(entry?.content).toContain("User: Keep the archive index updated.");
     expect(entry?.lineMap).toEqual([2]);
+  });
+});
+
+describe("extractSessionIdFromTranscriptFileName", () => {
+  it("returns the session id from a primary `<id>.jsonl` file name", () => {
+    expect(
+      extractSessionIdFromTranscriptFileName("0c122631-578e-4cd5-a4bf-149e7cd01c4b.jsonl"),
+    ).toBe("0c122631-578e-4cd5-a4bf-149e7cd01c4b");
+  });
+
+  it("returns the session id from a rotated `<id>.jsonl.deleted.<ts>` file name", () => {
+    expect(
+      extractSessionIdFromTranscriptFileName(
+        "0c122631-578e-4cd5-a4bf-149e7cd01c4b.jsonl.deleted.2026-04-25T06-33-10.801Z",
+      ),
+    ).toBe("0c122631-578e-4cd5-a4bf-149e7cd01c4b");
+  });
+
+  it("returns the session id from a rotated `<id>.jsonl.reset.<ts>` file name", () => {
+    expect(
+      extractSessionIdFromTranscriptFileName(
+        "abc12345-6789-4abc-def0-123456789abc.jsonl.reset.2026-04-25T06-33-10.801Z",
+      ),
+    ).toBe("abc12345-6789-4abc-def0-123456789abc");
+  });
+
+  it("returns the session id from a `<id>.trajectory.jsonl` file name", () => {
+    expect(
+      extractSessionIdFromTranscriptFileName(
+        "abc12345-6789-4abc-def0-123456789abc.trajectory.jsonl",
+      ),
+    ).toBe("abc12345-6789-4abc-def0-123456789abc");
+  });
+
+  it("returns the session id from a rotated `<id>.trajectory.jsonl.deleted.<ts>` file name", () => {
+    expect(
+      extractSessionIdFromTranscriptFileName(
+        "abc12345-6789-4abc-def0-123456789abc.trajectory.jsonl.deleted.2026-04-27T14-08-20.770Z",
+      ),
+    ).toBe("abc12345-6789-4abc-def0-123456789abc");
+  });
+
+  it("returns null for non-transcript file names", () => {
+    expect(extractSessionIdFromTranscriptFileName("sessions.json")).toBeNull();
+    expect(
+      extractSessionIdFromTranscriptFileName(
+        "abc12345-6789-4abc-def0-123456789abc.checkpoint.deadbeef-1234-4567-89ab-cdef01234567.jsonl",
+      ),
+    ).toBeNull();
+    expect(extractSessionIdFromTranscriptFileName("")).toBeNull();
+  });
+});
+
+describe("isCronRunTranscriptPath / isDreamingNarrativeTranscriptPath", () => {
+  function setupSessionsDir(opts: { cronSessionId: string; dreamingSessionId: string }): {
+    sessionsDir: string;
+    cronLivePath: string;
+    dreamingLivePath: string;
+  } {
+    const sessionsDir = path.join(tmpDir, "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    const cronLivePath = path.join(sessionsDir, `${opts.cronSessionId}.jsonl`);
+    const dreamingLivePath = path.join(sessionsDir, `${opts.dreamingSessionId}.jsonl`);
+    // sessions.json with one cron-run entry and one dreaming-narrative entry
+    fsSync.writeFileSync(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-1:run:run-1": {
+          sessionId: opts.cronSessionId,
+          sessionFile: cronLivePath,
+        },
+        "agent:main:dreaming-narrative-2026-04-25T06:00:00.000Z": {
+          sessionId: opts.dreamingSessionId,
+          sessionFile: dreamingLivePath,
+        },
+      }),
+      "utf-8",
+    );
+    return { sessionsDir, cronLivePath, dreamingLivePath };
+  }
+
+  it("classifies a live cron transcript path as cron-run", () => {
+    const { sessionsDir, cronLivePath } = setupSessionsDir({
+      cronSessionId: "cron-live-id",
+      dreamingSessionId: "dream-live-id",
+    });
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    expect(isCronRunTranscriptPath(classification, cronLivePath)).toBe(true);
+  });
+
+  it("classifies a rotated `*.jsonl.deleted.<ts>` cron transcript via session id (#72611 fix)", () => {
+    const { sessionsDir } = setupSessionsDir({
+      cronSessionId: "cron-rotated-id",
+      dreamingSessionId: "dream-live-id",
+    });
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    const rotatedPath = path.join(
+      sessionsDir,
+      "cron-rotated-id.jsonl.deleted.2026-04-25T06-33-10.801Z",
+    );
+    expect(isCronRunTranscriptPath(classification, rotatedPath)).toBe(true);
+  });
+
+  it("classifies a rotated `*.trajectory.jsonl.deleted.<ts>` cron transcript via session id", () => {
+    const { sessionsDir } = setupSessionsDir({
+      cronSessionId: "cron-traj-id",
+      dreamingSessionId: "dream-live-id",
+    });
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    const rotatedPath = path.join(
+      sessionsDir,
+      "cron-traj-id.trajectory.jsonl.deleted.2026-04-27T14-08-20.770Z",
+    );
+    expect(isCronRunTranscriptPath(classification, rotatedPath)).toBe(true);
+  });
+
+  it("classifies a `<id>.trajectory.jsonl` (live trajectory) cron transcript via session id", () => {
+    const { sessionsDir } = setupSessionsDir({
+      cronSessionId: "cron-traj-live-id",
+      dreamingSessionId: "dream-live-id",
+    });
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    const trajectoryPath = path.join(sessionsDir, "cron-traj-live-id.trajectory.jsonl");
+    expect(isCronRunTranscriptPath(classification, trajectoryPath)).toBe(true);
+  });
+
+  it("does not classify unrelated transcripts as cron-run", () => {
+    const { sessionsDir } = setupSessionsDir({
+      cronSessionId: "cron-id",
+      dreamingSessionId: "dream-id",
+    });
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    const unrelatedPath = path.join(sessionsDir, "00000000-0000-4000-8000-000000000000.jsonl");
+    expect(isCronRunTranscriptPath(classification, unrelatedPath)).toBe(false);
+  });
+
+  it("classifies rotated dreaming-narrative transcripts via session id", () => {
+    const { sessionsDir } = setupSessionsDir({
+      cronSessionId: "cron-id",
+      dreamingSessionId: "dream-rot-id",
+    });
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    const rotated = path.join(sessionsDir, "dream-rot-id.jsonl.deleted.2026-04-25T06-33-10.801Z");
+    expect(isDreamingNarrativeTranscriptPath(classification, rotated)).toBe(true);
+  });
+});
+
+describe("lookupSessionKeyForTranscriptPath", () => {
+  it("returns the session key for a live transcript path", () => {
+    const sessionsDir = path.join(tmpDir, "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    const livePath = path.join(sessionsDir, "session-A.jsonl");
+    fsSync.writeFileSync(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-7:run:run-9": {
+          sessionId: "session-A",
+          sessionFile: livePath,
+        },
+      }),
+      "utf-8",
+    );
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    expect(lookupSessionKeyForTranscriptPath(classification, livePath)).toBe(
+      "agent:main:cron:job-7:run:run-9",
+    );
+  });
+
+  it("recovers the session key for a rotated `.jsonl.deleted.<ts>` transcript", () => {
+    const sessionsDir = path.join(tmpDir, "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    const livePath = path.join(sessionsDir, "session-B.jsonl");
+    fsSync.writeFileSync(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-8:run:run-2": {
+          sessionId: "session-B",
+          sessionFile: livePath,
+        },
+      }),
+      "utf-8",
+    );
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    const rotatedPath = path.join(sessionsDir, "session-B.jsonl.deleted.2026-04-25T06-33-10.801Z");
+    expect(lookupSessionKeyForTranscriptPath(classification, rotatedPath)).toBe(
+      "agent:main:cron:job-8:run:run-2",
+    );
+  });
+
+  it("returns null for unknown transcripts", () => {
+    const sessionsDir = path.join(tmpDir, "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    fsSync.writeFileSync(path.join(sessionsDir, "sessions.json"), "{}", "utf-8");
+    const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+    const unrelated = path.join(sessionsDir, "no-such.jsonl");
+    expect(lookupSessionKeyForTranscriptPath(classification, unrelated)).toBeNull();
   });
 });

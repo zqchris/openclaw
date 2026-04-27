@@ -10,6 +10,7 @@ import {
   isCompactionCheckpointTranscriptFileName,
   isSessionArchiveArtifactName,
   isUsageCountedSessionTranscriptFileName,
+  parseUsageCountedSessionIdFromFileName,
 } from "../../config/sessions/artifacts.js";
 import { resolveSessionTranscriptsDirForAgent } from "../../config/sessions/paths.js";
 import { isExecCompletionEvent } from "../../infra/heartbeat-events-filter.js";
@@ -53,6 +54,32 @@ export type BuildSessionEntryOptions = {
 export type SessionTranscriptClassification = {
   dreamingNarrativeTranscriptPaths: ReadonlySet<string>;
   cronRunTranscriptPaths: ReadonlySet<string>;
+  /**
+   * Session IDs of dreaming-narrative sessions, used to classify rotated
+   * (`*.jsonl.deleted.<ts>`, `*.jsonl.reset.<ts>`, `*.trajectory.jsonl[.deleted.<ts>]`)
+   * transcript artifacts whose absolute path no longer matches the live
+   * `sessionFile` recorded in sessions.json.
+   */
+  dreamingNarrativeSessionIds: ReadonlySet<string>;
+  /**
+   * Session IDs of cron-run sessions, used to classify rotated transcripts
+   * (see dreamingNarrativeSessionIds for the same rationale). Fixes #72611
+   * where isolated cron transcripts leaked into the dreaming session corpus
+   * after the live transcript was rotated to `*.jsonl.deleted.<ts>`.
+   */
+  cronRunSessionIds: ReadonlySet<string>;
+  /**
+   * Reverse lookup: normalized transcript path → owning session key. Filled
+   * for every entry in sessions.json; consumers can resolve the session key
+   * for a live (non-rotated) transcript by looking it up directly.
+   */
+  transcriptPathToSessionKey: ReadonlyMap<string, string>;
+  /**
+   * Reverse lookup: session id → owning session key. Used to recover the
+   * session key for rotated transcripts whose live path is no longer present
+   * in transcriptPathToSessionKey.
+   */
+  sessionIdToSessionKey: ReadonlyMap<string, string>;
 };
 
 type SessionTranscriptStoreEntry = {
@@ -175,22 +202,134 @@ export function loadSessionTranscriptClassificationForSessionsDir(
   const store = readSessionTranscriptClassificationStore(storePath);
   const dreamingTranscriptPaths = new Set<string>();
   const cronRunTranscriptPaths = new Set<string>();
+  const dreamingNarrativeSessionIds = new Set<string>();
+  const cronRunSessionIds = new Set<string>();
+  const transcriptPathToSessionKey = new Map<string, string>();
+  const sessionIdToSessionKey = new Map<string, string>();
   for (const [sessionKey, entry] of Object.entries(store)) {
     const transcriptPath = resolveSessionStoreTranscriptPath(sessionsDir, entry);
-    if (!transcriptPath) {
-      continue;
+    const sessionId = readSessionStoreSessionId(entry);
+    if (transcriptPath) {
+      transcriptPathToSessionKey.set(transcriptPath, sessionKey);
+    }
+    if (sessionId) {
+      sessionIdToSessionKey.set(sessionId, sessionKey);
     }
     if (isDreamingNarrativeSessionStoreKey(sessionKey)) {
-      dreamingTranscriptPaths.add(transcriptPath);
+      if (transcriptPath) {
+        dreamingTranscriptPaths.add(transcriptPath);
+      }
+      if (sessionId) {
+        dreamingNarrativeSessionIds.add(sessionId);
+      }
     }
     if (isCronRunSessionKey(sessionKey)) {
-      cronRunTranscriptPaths.add(transcriptPath);
+      if (transcriptPath) {
+        cronRunTranscriptPaths.add(transcriptPath);
+      }
+      if (sessionId) {
+        cronRunSessionIds.add(sessionId);
+      }
     }
   }
   return {
     dreamingNarrativeTranscriptPaths: dreamingTranscriptPaths,
     cronRunTranscriptPaths,
+    dreamingNarrativeSessionIds,
+    cronRunSessionIds,
+    transcriptPathToSessionKey,
+    sessionIdToSessionKey,
   };
+}
+
+/**
+ * Resolve the session key (e.g. `agent:main:cron:<cronJobId>`) for a given
+ * absolute transcript path. Returns null when the path is unknown to
+ * sessions.json (orphaned files, corrupted store, etc.).
+ *
+ * Tries the direct path lookup first; falls back to extracting the session id
+ * from the file name and looking that up, which lets rotated transcripts
+ * (`*.jsonl.deleted.<ts>` etc.) still resolve to their owning session.
+ */
+export function lookupSessionKeyForTranscriptPath(
+  classification: SessionTranscriptClassification,
+  absPath: string,
+): string | null {
+  const direct = classification.transcriptPathToSessionKey.get(normalizeComparablePath(absPath));
+  if (direct) {
+    return direct;
+  }
+  const sessionId = extractSessionIdFromTranscriptFileName(path.basename(absPath));
+  if (!sessionId) {
+    return null;
+  }
+  return classification.sessionIdToSessionKey.get(sessionId) ?? null;
+}
+
+function readSessionStoreSessionId(entry: { sessionId?: unknown } | undefined): string | null {
+  if (!entry || typeof entry.sessionId !== "string") {
+    return null;
+  }
+  const trimmed = entry.sessionId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Extract the canonical session id from a transcript file name, including
+ * rotated artifacts. Handles:
+ *   - `<sessionId>.jsonl`
+ *   - `<sessionId>.jsonl.deleted.<ts>` / `<sessionId>.jsonl.reset.<ts>`
+ *   - `<sessionId>.trajectory.jsonl[.deleted.<ts> | .reset.<ts>]`
+ *
+ * Returns null when the file name does not match any usage-counted shape
+ * (compaction checkpoints, sessions.json, archive backups, etc.).
+ */
+export function extractSessionIdFromTranscriptFileName(fileName: string): string | null {
+  const trimmed = fileName.trim();
+  if (!trimmed || !isUsageCountedSessionTranscriptFileName(trimmed)) {
+    return null;
+  }
+  // parseUsageCountedSessionIdFromFileName strips `.jsonl[.deleted|.reset.<ts>]`
+  // but leaves `.trajectory` suffix attached when the file is a trajectory
+  // artifact, e.g. returns `<uuid>.trajectory` for `<uuid>.trajectory.jsonl`.
+  const base =
+    parseUsageCountedSessionIdFromFileName(trimmed) ??
+    (trimmed.endsWith(".jsonl") ? trimmed.slice(0, -".jsonl".length) : null);
+  if (!base) {
+    return null;
+  }
+  return base.endsWith(".trajectory") ? base.slice(0, -".trajectory".length) : base;
+}
+
+/**
+ * Check whether an absolute transcript path belongs to a cron-run session.
+ *
+ * Looks up the live `sessionFile` path in the classification first. When the
+ * file has been rotated to `*.jsonl.deleted.<ts>` (or `.trajectory.jsonl.*`)
+ * the live path no longer matches, so we fall back to extracting the session
+ * id from the file name and looking it up in the classification's session-id
+ * set. Fixes #72611.
+ */
+export function isCronRunTranscriptPath(
+  classification: SessionTranscriptClassification,
+  absPath: string,
+): boolean {
+  if (classification.cronRunTranscriptPaths.has(normalizeComparablePath(absPath))) {
+    return true;
+  }
+  const sessionId = extractSessionIdFromTranscriptFileName(path.basename(absPath));
+  return sessionId !== null && classification.cronRunSessionIds.has(sessionId);
+}
+
+export function isDreamingNarrativeTranscriptPath(
+  classification: SessionTranscriptClassification,
+  absPath: string,
+): boolean {
+  if (classification.dreamingNarrativeTranscriptPaths.has(normalizeComparablePath(absPath))) {
+    return true;
+  }
+  const sessionId = extractSessionIdFromTranscriptFileName(path.basename(absPath));
+  return sessionId !== null && classification.dreamingNarrativeSessionIds.has(sessionId);
 }
 
 function readSessionTranscriptClassificationStore(
