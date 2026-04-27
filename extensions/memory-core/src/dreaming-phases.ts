@@ -4,20 +4,27 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   buildSessionEntry,
+  isCronRunTranscriptPath,
+  isDreamingNarrativeTranscriptPath,
   listSessionFilesForAgent,
   loadSessionTranscriptClassificationForAgent,
-  normalizeSessionTranscriptPathForComparison,
+  lookupSessionKeyForTranscriptPath,
   parseUsageCountedSessionIdFromFileName,
   sessionPathForFile,
 } from "openclaw/plugin-sdk/memory-core-host-engine-qmd";
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-core-host-runtime-files";
 import {
   formatMemoryDreamingDay,
+  resolveMemoryDreamingPluginConfig,
   resolveMemoryDreamingWorkspaces,
   resolveMemoryLightDreamingConfig,
   resolveMemoryRemDreamingConfig,
 } from "openclaw/plugin-sdk/memory-core-host-status";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  compileSafeRegexDetailed,
+  testRegexWithBoundedInput,
+} from "openclaw/plugin-sdk/security-runtime";
 import { writeDailyDreamingPhaseBlock } from "./dreaming-markdown.js";
 import {
   generateAndAppendDreamNarrative,
@@ -716,6 +723,164 @@ async function appendSessionCorpusLines(params: {
   });
 }
 
+type SessionIngestionExcludeInput = {
+  agentId: string;
+  sessionPath: string;
+  sessionKey: string | null;
+};
+
+type SessionIngestionExcludePredicate = (input: SessionIngestionExcludeInput) => boolean;
+
+const SESSION_KEY_CRON_JOB_RE = /(?:^|:)cron:([^:]+)/;
+
+function readSessionFilterStringArray(
+  filter: Record<string, unknown> | undefined,
+  key: string,
+): string[] {
+  const raw = filter?.[key];
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
+// Defense-in-depth bounds for operator-supplied regex filters. Even though
+// `dreaming.sessionFilter.*` is operator-only config (not user-controlled in
+// any tenant model OpenClaw ships today), we still cap pattern length and
+// count, route compilation through the shared safe-regex helper which rejects
+// nested-repetition patterns that risk catastrophic backtracking, and bound
+// every test against a fixed input window. CWE-1333 ReDoS hardening.
+const SESSION_FILTER_REGEX_MAX_PATTERN_CHARS = 512;
+const SESSION_FILTER_REGEX_MAX_PATTERN_COUNT = 32;
+const SESSION_FILTER_REGEX_INPUT_WINDOW = 4096;
+
+function compileSessionFilterRegexes(patterns: string[], logger?: Logger): RegExp[] {
+  const out: RegExp[] = [];
+  let droppedTooLong = 0;
+  let droppedUnsafe = 0;
+  let droppedInvalid = 0;
+  let truncatedCount = false;
+  const limit = Math.min(patterns.length, SESSION_FILTER_REGEX_MAX_PATTERN_COUNT);
+  if (patterns.length > SESSION_FILTER_REGEX_MAX_PATTERN_COUNT) {
+    truncatedCount = true;
+  }
+  for (let index = 0; index < limit; index += 1) {
+    const pattern = patterns[index];
+    if (pattern.length > SESSION_FILTER_REGEX_MAX_PATTERN_CHARS) {
+      droppedTooLong += 1;
+      continue;
+    }
+    const compiled = compileSafeRegexDetailed(pattern);
+    if (compiled.regex) {
+      out.push(compiled.regex);
+      continue;
+    }
+    if (compiled.reason === "unsafe-nested-repetition") {
+      droppedUnsafe += 1;
+    } else {
+      droppedInvalid += 1;
+    }
+  }
+  // Aggregate, content-free diagnostics. We deliberately do NOT log raw
+  // pattern strings (CWE-117 log injection / accidental secret exposure):
+  // operator config can contain arbitrary bytes including newlines/control
+  // chars that would forge log lines, and patterns occasionally embed paths
+  // or identifiers operators consider sensitive. The reason codes here are
+  // the documented `compileSafeRegexDetailed` reasons and contain no user
+  // input.
+  if (droppedTooLong + droppedUnsafe + droppedInvalid + (truncatedCount ? 1 : 0) > 0) {
+    logger?.warn?.(
+      `[memory-core] dreaming.sessionFilter.excludeSourcePathRegex: dropped patterns (too-long=${droppedTooLong}, unsafe-nested-repetition=${droppedUnsafe}, invalid-regex=${droppedInvalid}${
+        truncatedCount ? `, count-truncated-to-${SESSION_FILTER_REGEX_MAX_PATTERN_COUNT}` : ""
+      })`,
+    );
+  }
+  return out;
+}
+
+function extractCronJobIdFromSessionKey(sessionKey: string): string | null {
+  const match = SESSION_KEY_CRON_JOB_RE.exec(sessionKey);
+  if (!match) {
+    return null;
+  }
+  const trimmed = match[1].trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Build a predicate that returns true when a session transcript should be
+ * excluded from dreaming session corpus ingestion based on
+ * `dreaming.sessionFilter.*` operator config (#72611).
+ *
+ * Returns a no-op predicate when the filter is empty/unset so callers do not
+ * pay any per-file overhead in the common case.
+ */
+function resolveSessionIngestionExcludePredicate(
+  cfg: DreamingHostConfig,
+  logger?: Logger,
+): SessionIngestionExcludePredicate {
+  const pluginConfig = resolveMemoryDreamingPluginConfig(
+    cfg as Parameters<typeof resolveMemoryDreamingPluginConfig>[0],
+  );
+  const dreaming = asRecord(pluginConfig?.dreaming);
+  const sessionFilter = asRecord(dreaming?.sessionFilter);
+  if (!sessionFilter) {
+    return () => false;
+  }
+  const cronJobIds = new Set(readSessionFilterStringArray(sessionFilter, "excludeCronJobIds"));
+  const sessionKeyPrefixes = readSessionFilterStringArray(
+    sessionFilter,
+    "excludeSessionKeyPrefixes",
+  );
+  const agentIds = new Set(readSessionFilterStringArray(sessionFilter, "excludeAgentIds"));
+  const sourcePathRegexes = compileSessionFilterRegexes(
+    readSessionFilterStringArray(sessionFilter, "excludeSourcePathRegex"),
+    logger,
+  );
+  if (
+    cronJobIds.size === 0 &&
+    sessionKeyPrefixes.length === 0 &&
+    agentIds.size === 0 &&
+    sourcePathRegexes.length === 0
+  ) {
+    return () => false;
+  }
+  return ({ agentId, sessionPath, sessionKey }) => {
+    if (agentIds.has(agentId)) {
+      return true;
+    }
+    if (sessionKey) {
+      for (const prefix of sessionKeyPrefixes) {
+        if (sessionKey.startsWith(prefix)) {
+          return true;
+        }
+      }
+      if (cronJobIds.size > 0) {
+        const cronJobId = extractCronJobIdFromSessionKey(sessionKey);
+        if (cronJobId && cronJobIds.has(cronJobId)) {
+          return true;
+        }
+      }
+    }
+    for (const re of sourcePathRegexes) {
+      if (testRegexWithBoundedInput(re, sessionPath, SESSION_FILTER_REGEX_INPUT_WINDOW)) {
+        return true;
+      }
+    }
+    return false;
+  };
+}
+
 async function collectSessionIngestionBatches(params: {
   workspaceDir: string;
   cfg?: DreamingHostConfig;
@@ -724,6 +889,7 @@ async function collectSessionIngestionBatches(params: {
   nowMs: number;
   timezone?: string;
   state: SessionIngestionState;
+  logger?: Logger;
 }): Promise<SessionIngestionCollectionResult> {
   if (!params.cfg) {
     return {
@@ -745,6 +911,8 @@ async function collectSessionIngestionBatches(params: {
   const nextSeenMessages: Record<string, string[]> = { ...params.state.seenMessages };
   let changed = false;
 
+  const excludePredicate = resolveSessionIngestionExcludePredicate(params.cfg, params.logger);
+
   const sessionFiles: Array<{
     agentId: string;
     absolutePath: string;
@@ -760,19 +928,40 @@ async function collectSessionIngestionBatches(params: {
         : {
             dreamingNarrativeTranscriptPaths: new Set<string>(),
             cronRunTranscriptPaths: new Set<string>(),
+            dreamingNarrativeSessionIds: new Set<string>(),
+            cronRunSessionIds: new Set<string>(),
+            transcriptPathToSessionKey: new Map<string, string>(),
+            sessionIdToSessionKey: new Map<string, string>(),
           };
     for (const absolutePath of files) {
       if (isCheckpointSessionTranscriptPath(absolutePath)) {
         continue;
       }
-      const normalizedPath = normalizeSessionTranscriptPathForComparison(absolutePath);
+      const sessionPath = sessionPathForFile(absolutePath);
+      const sessionKey = lookupSessionKeyForTranscriptPath(transcriptClassification, absolutePath);
+      if (
+        excludePredicate({
+          agentId,
+          sessionPath,
+          sessionKey,
+        })
+      ) {
+        continue;
+      }
       sessionFiles.push({
         agentId,
         absolutePath,
-        generatedByDreamingNarrative:
-          transcriptClassification.dreamingNarrativeTranscriptPaths.has(normalizedPath),
-        generatedByCronRun: transcriptClassification.cronRunTranscriptPaths.has(normalizedPath),
-        sessionPath: sessionPathForFile(absolutePath),
+        // Use sessionId-aware classification helpers so rotated transcripts
+        // (`*.jsonl.deleted.<ts>`, `*.jsonl.reset.<ts>`,
+        // `*.trajectory.jsonl[.deleted.<ts>]`) are still attributed to the
+        // owning session even when the on-disk path no longer matches the
+        // live `sessionFile` recorded in sessions.json. Fixes #72611.
+        generatedByDreamingNarrative: isDreamingNarrativeTranscriptPath(
+          transcriptClassification,
+          absolutePath,
+        ),
+        generatedByCronRun: isCronRunTranscriptPath(transcriptClassification, absolutePath),
+        sessionPath,
       });
     }
   }
@@ -1025,6 +1214,7 @@ async function ingestSessionTranscriptSignals(params: {
   lookbackDays: number;
   nowMs: number;
   timezone?: string;
+  logger?: Logger;
 }): Promise<void> {
   const state = await readSessionIngestionState(params.workspaceDir);
   const collected = await collectSessionIngestionBatches({
@@ -1035,6 +1225,7 @@ async function ingestSessionTranscriptSignals(params: {
     nowMs: params.nowMs,
     timezone: params.timezone,
     state,
+    logger: params.logger,
   });
   const ingestionDayBucket = formatMemoryDreamingDay(params.nowMs, params.timezone);
   for (const batch of collected.batches) {
@@ -1562,6 +1753,7 @@ async function runLightDreaming(params: {
     lookbackDays: params.config.lookbackDays,
     nowMs,
     timezone: params.config.timezone,
+    logger: params.logger,
   });
   const recentEntries = await filterLiveShortTermRecallEntries({
     workspaceDir: params.workspaceDir,
@@ -1661,6 +1853,7 @@ async function runRemDreaming(params: {
     lookbackDays: params.config.lookbackDays,
     nowMs,
     timezone: params.config.timezone,
+    logger: params.logger,
   });
   const entries = await filterLiveShortTermRecallEntries({
     workspaceDir: params.workspaceDir,

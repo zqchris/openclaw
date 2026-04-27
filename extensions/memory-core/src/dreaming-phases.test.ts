@@ -1188,6 +1188,447 @@ describe("memory-core dreaming phases", () => {
     ]);
   });
 
+  it("skips rotated cron run transcripts (`.jsonl.deleted.<ts>`) via session id (#72611)", async () => {
+    // Regression for #72611: when an isolated cron transcript is rotated to a
+    // `.jsonl.deleted.<ts>` artifact the live `sessionFile` path in
+    // sessions.json no longer matches on disk, so path-based classification
+    // missed it and the rotated transcript leaked into session-corpus. The
+    // sessionId-based classification helper introduced alongside this test
+    // recovers the cron classification by extracting the session id from the
+    // rotated filename.
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    // Note the file name: rotated artifact (.jsonl.deleted.<ts>).
+    const rotatedTranscriptPath = path.join(
+      sessionsDir,
+      "cron-rotated-run.jsonl.deleted.2026-04-05T18-30-00.000Z",
+    );
+    await fs.writeFile(
+      rotatedTranscriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            timestamp: "2026-04-05T18:01:00.000Z",
+            content: "[cron:job-2 Daily Backup] Run nightly backup pipeline",
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:02:00.000Z",
+            content: "Running nightly backup...",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    // sessions.json still references the original (live) file name. The live
+    // file no longer exists on disk; only the rotated `.deleted.<ts>` artifact
+    // is present. Path-based classification cannot connect the two without
+    // sessionId-based fallback.
+    await fs.writeFile(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-2:run:run-1": {
+          sessionId: "cron-rotated-run",
+          sessionFile: path.join(sessionsDir, "cron-rotated-run.jsonl"),
+          updatedAt: Date.now(),
+        },
+      }),
+      "utf-8",
+    );
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: {
+            workspace: workspaceDir,
+          },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: {
+                    light: { enabled: true, limit: 20, lookbackDays: 7 },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      await beforeAgentReply(
+        { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+        { trigger: "heartbeat", workspaceDir },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    // Corpus must NOT contain the rotated cron transcript even though path
+    // classification would have missed it.
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("respects dreaming.sessionFilter.excludeSessionKeyPrefixes for operator-driven exclusion", async () => {
+    // Verifies the operator-facing config knob added in #72611. Using the
+    // session-key prefix `agent:main:cron:` excludes both classic
+    // `cron:<id>:run:<runId>` shapes and the broader `cron:<id>` shape that
+    // does not match the strict cron-run regex used by the built-in
+    // classifier.
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    // Use a `cron:<id>` (non-run) session key so the built-in
+    // isCronRunSessionKey classifier does NOT mark this transcript as cron;
+    // only the operator filter should drop it.
+    const transcriptPath = path.join(sessionsDir, "isolated-cron.jsonl");
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            timestamp: "2026-04-05T18:01:00.000Z",
+            content: "Real conversational content from an isolated cron job",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-99": {
+          sessionId: "isolated-cron",
+          sessionFile: transcriptPath,
+          updatedAt: Date.now(),
+        },
+      }),
+      "utf-8",
+    );
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: {
+            workspace: workspaceDir,
+          },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: {
+                    light: { enabled: true, limit: 20, lookbackDays: 7 },
+                  },
+                  sessionFilter: {
+                    excludeSessionKeyPrefixes: ["agent:main:cron:"],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      await beforeAgentReply(
+        { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+        { trigger: "heartbeat", workspaceDir },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("respects dreaming.sessionFilter.excludeCronJobIds (global cron job match)", async () => {
+    // Covers the cronJobId branch of the operator filter and confirms the
+    // documented "global across all agents" semantics: a cron job id matches
+    // wherever it appears in the session key, regardless of the owning agent.
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "cron-by-id.jsonl");
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            timestamp: "2026-04-05T18:01:00.000Z",
+            content: "Inbound prompt for the high-volume cron job",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:noisy-job:run:run-1": {
+          sessionId: "cron-by-id",
+          sessionFile: transcriptPath,
+          updatedAt: Date.now(),
+        },
+      }),
+      "utf-8",
+    );
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: { workspace: workspaceDir },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: { light: { enabled: true, limit: 20, lookbackDays: 7 } },
+                  sessionFilter: { excludeCronJobIds: ["noisy-job"] },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      await beforeAgentReply(
+        { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+        { trigger: "heartbeat", workspaceDir },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("respects dreaming.sessionFilter.excludeAgentIds", async () => {
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "regular-session.jsonl");
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            timestamp: "2026-04-05T18:01:00.000Z",
+            content: "Just a regular conversation",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    // No sessions.json entry: agentIds filter is purely on the agent id passed
+    // to the predicate, independent of the cron / dreaming-narrative
+    // classification.
+    await fs.writeFile(path.join(sessionsDir, "sessions.json"), "{}", "utf-8");
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: { workspace: workspaceDir },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: { light: { enabled: true, limit: 20, lookbackDays: 7 } },
+                  sessionFilter: { excludeAgentIds: ["main"] },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      await beforeAgentReply(
+        { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+        { trigger: "heartbeat", workspaceDir },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("respects dreaming.sessionFilter.excludeSourcePathRegex against the documented `sessions/<basename>` shape", async () => {
+    // Pinned against the actual `sessionPathForFile` output (`sessions/<basename>`,
+    // no agent prefix) — operators reading the schema description should be
+    // able to write a non-anchored pattern that matches both live and rotated
+    // artifacts. The pattern below uses a basename-prefix anchor.
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "ad-hoc-blocked-id.jsonl");
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            timestamp: "2026-04-05T18:01:00.000Z",
+            content: "An ad-hoc session the operator wants out of the corpus",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    await fs.writeFile(path.join(sessionsDir, "sessions.json"), "{}", "utf-8");
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: { workspace: workspaceDir },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: { light: { enabled: true, limit: 20, lookbackDays: 7 } },
+                  sessionFilter: {
+                    excludeSourcePathRegex: ["^sessions/ad-hoc-blocked-"],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      await beforeAgentReply(
+        { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+        { trigger: "heartbeat", workspaceDir },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("drops dangerous excludeSourcePathRegex patterns without breaking ingestion (CWE-1333 hardening)", async () => {
+    // Catastrophic-backtracking patterns from operator config are dropped at
+    // compile time by the safe-regex helper, and the predicate is built on
+    // the survivors. We assert here that configuring such a pattern alongside
+    // a benign one does not stall ingestion or throw — the unsafe pattern is
+    // simply absent from the compiled regex array. (Negative-by-side-effect:
+    // we don't try to time the ReDoS happening, which would be both flaky
+    // and unsafe to schedule in CI.)
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    await fs.writeFile(path.join(sessionsDir, "sessions.json"), "{}", "utf-8");
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: { workspace: workspaceDir },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: { light: { enabled: true, limit: 20, lookbackDays: 7 } },
+                  sessionFilter: {
+                    // Classic ReDoS shape (nested quantifier on a group) +
+                    // a benign one. Helper drops the unsafe one, keeps the
+                    // benign one.
+                    excludeSourcePathRegex: ["^(a+)+$", "^sessions/never-matches-anything-"],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      // Ingestion path runs without throwing or hanging; that is the
+      // observable contract we want to pin for ReDoS hardening.
+      await expect(
+        beforeAgentReply(
+          { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+          { trigger: "heartbeat", workspaceDir },
+        ),
+      ).resolves.not.toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("drops generated system wrapper text without suppressing paired assistant replies", async () => {
     const workspaceDir = await createDreamingWorkspace();
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");

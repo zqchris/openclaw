@@ -55,6 +55,10 @@ export type BuildSessionEntryOptions = {
 export type SessionTranscriptClassification = {
   dreamingNarrativeTranscriptPaths: ReadonlySet<string>;
   cronRunTranscriptPaths: ReadonlySet<string>;
+  dreamingNarrativeSessionIds: ReadonlySet<string>;
+  cronRunSessionIds: ReadonlySet<string>;
+  transcriptPathToSessionKey: ReadonlyMap<string, string>;
+  sessionIdToSessionKey: ReadonlyMap<string, string>;
 };
 
 type SessionTranscriptStoreEntry = {
@@ -224,22 +228,103 @@ export function loadSessionTranscriptClassificationForSessionsDir(
   const store = readSessionTranscriptClassificationStore(storePath);
   const dreamingTranscriptPaths = new Set<string>();
   const cronRunTranscriptPaths = new Set<string>();
+  const dreamingNarrativeSessionIds = new Set<string>();
+  const cronRunSessionIds = new Set<string>();
+  const transcriptPathToSessionKey = new Map<string, string>();
+  const sessionIdToSessionKey = new Map<string, string>();
   for (const [sessionKey, entry] of Object.entries(store)) {
     const transcriptPath = resolveSessionStoreTranscriptPath(sessionsDir, entry);
-    if (!transcriptPath) {
-      continue;
+    const sessionId = readSessionStoreSessionId(entry);
+    if (transcriptPath) {
+      transcriptPathToSessionKey.set(transcriptPath, sessionKey);
+    }
+    if (sessionId) {
+      sessionIdToSessionKey.set(sessionId, sessionKey);
     }
     if (isDreamingNarrativeSessionStoreKey(sessionKey)) {
-      dreamingTranscriptPaths.add(transcriptPath);
+      if (transcriptPath) {
+        dreamingTranscriptPaths.add(transcriptPath);
+      }
+      if (sessionId) {
+        dreamingNarrativeSessionIds.add(sessionId);
+      }
     }
     if (isCronRunSessionKey(sessionKey)) {
-      cronRunTranscriptPaths.add(transcriptPath);
+      if (transcriptPath) {
+        cronRunTranscriptPaths.add(transcriptPath);
+      }
+      if (sessionId) {
+        cronRunSessionIds.add(sessionId);
+      }
     }
   }
   return {
     dreamingNarrativeTranscriptPaths: dreamingTranscriptPaths,
     cronRunTranscriptPaths,
+    dreamingNarrativeSessionIds,
+    cronRunSessionIds,
+    transcriptPathToSessionKey,
+    sessionIdToSessionKey,
   };
+}
+
+function readSessionStoreSessionId(entry: { sessionId?: unknown } | undefined): string | null {
+  if (!entry || typeof entry.sessionId !== "string") {
+    return null;
+  }
+  const trimmed = entry.sessionId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function lookupSessionKeyForTranscriptPath(
+  classification: SessionTranscriptClassification,
+  absPath: string,
+): string | null {
+  const direct = classification.transcriptPathToSessionKey.get(normalizeComparablePath(absPath));
+  if (direct) {
+    return direct;
+  }
+  const sessionId = extractSessionIdFromTranscriptFileName(path.basename(absPath));
+  if (!sessionId) {
+    return null;
+  }
+  return classification.sessionIdToSessionKey.get(sessionId) ?? null;
+}
+
+export function extractSessionIdFromTranscriptFileName(fileName: string): string | null {
+  const trimmed = fileName.trim();
+  if (!trimmed || !isUsageCountedSessionTranscriptFileName(trimmed)) {
+    return null;
+  }
+  const base =
+    parseUsageCountedSessionIdFromFileName(trimmed) ??
+    (trimmed.endsWith(".jsonl") ? trimmed.slice(0, -".jsonl".length) : null);
+  if (!base) {
+    return null;
+  }
+  return base.endsWith(".trajectory") ? base.slice(0, -".trajectory".length) : base;
+}
+
+export function isCronRunTranscriptPath(
+  classification: SessionTranscriptClassification,
+  absPath: string,
+): boolean {
+  if (classification.cronRunTranscriptPaths.has(normalizeComparablePath(absPath))) {
+    return true;
+  }
+  const sessionId = extractSessionIdFromTranscriptFileName(path.basename(absPath));
+  return sessionId !== null && classification.cronRunSessionIds.has(sessionId);
+}
+
+export function isDreamingNarrativeTranscriptPath(
+  classification: SessionTranscriptClassification,
+  absPath: string,
+): boolean {
+  if (classification.dreamingNarrativeTranscriptPaths.has(normalizeComparablePath(absPath))) {
+    return true;
+  }
+  const sessionId = extractSessionIdFromTranscriptFileName(path.basename(absPath));
+  return sessionId !== null && classification.dreamingNarrativeSessionIds.has(sessionId);
 }
 
 function readSessionTranscriptClassificationStore(
