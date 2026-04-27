@@ -17,10 +17,10 @@ import type { TtsAutoMode } from "../../config/types.tts.js";
 import { sleepWithAbort } from "../../infra/backoff.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { OutboundDeliveryResult } from "../../infra/outbound/deliver.js";
+import { resolveOutboundSessionRoute } from "../../infra/outbound/outbound-session.js";
 import { normalizeTargetForProvider } from "../../infra/outbound/target-normalization.js";
 import { hasReplyPayloadContent } from "../../interactive/payload.js";
 import { stringifyRouteThreadId } from "../../plugin-sdk/channel-route.js";
-import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -111,27 +111,29 @@ export function resolveCronDeliveryBestEffort(job: CronJob): boolean {
  * Scope: BlueBubbles only. Other channels return undefined — callers keep
  * the previous behavior of not mirroring cron output.
  *
- * Assumes BlueBubbles cron targets are group chats. If a cron ever targets
- * a BB direct DM, the group-shaped session key will not match that DM's
- * actual session key and the mirror will land in the wrong transcript.
- * Guarded best-effort: resolveAgentRoute failures return undefined so the
+ * The target session route is delegated to the shared outbound session
+ * resolver, which lets the BlueBubbles plugin normalize chat_guid DM/group
+ * shapes exactly like normal outbound sends and inbound replies do.
+ * Guarded best-effort: route resolution failures return undefined so the
  * delivery itself is never blocked.
  */
-function buildBluebubblesCronMirror(params: {
+async function buildBluebubblesCronMirror(params: {
   cfg: OpenClawConfig;
+  agentId: string;
   delivery: { channel: string; to: string; accountId?: string };
   payloads: ReplyPayload[];
   deliveryIdempotencyKey: string;
-}):
+}): Promise<
   | {
       sessionKey: string;
       agentId?: string;
       text: string;
       idempotencyKey: string;
-      isGroup: true;
-      groupId: string;
+      isGroup: boolean;
+      groupId?: string;
     }
-  | undefined {
+  | undefined
+> {
   const channel = normalizeLowercaseStringOrEmpty(params.delivery.channel);
   if (channel !== "bluebubbles") {
     return undefined;
@@ -148,24 +150,28 @@ function buildBluebubblesCronMirror(params: {
     return undefined;
   }
   try {
-    const route = resolveAgentRoute({
+    const route = await resolveOutboundSessionRoute({
       cfg: params.cfg,
       channel: "bluebubbles",
+      agentId: params.agentId,
       accountId: params.delivery.accountId ?? null,
-      peer: { kind: "group", id: to },
+      target: to,
     });
-    if (!route.sessionKey) {
+    if (!route?.sessionKey) {
       return undefined;
     }
+    const isGroup = route.chatType !== "direct";
     return {
       sessionKey: route.sessionKey,
-      agentId: route.agentId,
+      agentId: params.agentId,
       text,
       // Reuse the delivery idempotency key so retries of the same cron run
       // do not append duplicate transcript entries.
       idempotencyKey: params.deliveryIdempotencyKey,
-      isGroup: true,
-      groupId: to,
+      isGroup,
+      // Only set groupId for group sessions; DM sessions have no group id
+      // and outbound consumers branch on isGroup before reading groupId.
+      ...(isGroup ? { groupId: route.peer.id } : {}),
     };
   } catch {
     return undefined;
@@ -731,11 +737,12 @@ export async function dispatchCronDelivery(
       // context cannot be reconstructed from the reply itself. Other
       // channels leave mirror unset and keep current behavior.
       //
-      // Assumes BlueBubbles cron targets are always group chats; direct DM
-      // cron to self would resolve to a wrong session key. Revisit if that
-      // use case shows up.
-      const bluebubblesMirror = buildBluebubblesCronMirror({
+      // The shared outbound session resolver normalizes BlueBubbles target
+      // shapes the same way normal outbound sends do, so chat_guid DMs and
+      // groups land in the same transcript that later replies will use.
+      const bluebubblesMirror = await buildBluebubblesCronMirror({
         cfg: params.cfgWithAgentDefaults,
+        agentId: params.agentId,
         delivery: {
           channel: delivery.channel,
           to: delivery.to,
