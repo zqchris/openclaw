@@ -101,6 +101,37 @@ export function resolveCronDeliveryBestEffort(job: CronJob): boolean {
 }
 
 /**
+ * Cheap DM-vs-group inference from a raw BlueBubbles outbound target string.
+ *
+ * Mirrors the chat-type detection used by
+ * `extensions/bluebubbles/src/targets.ts inferBlueBubblesTargetChatType` and
+ * the routing in `extensions/bluebubbles/src/session-route.ts` without
+ * pulling the BlueBubbles plugin into the cron delivery path. Re-derives the
+ * answer from the on-the-wire target shape:
+ *
+ *   - `chat_guid:iMessage;+;<group-id>` → group (`;+;` is the group marker)
+ *   - `chat_guid:iMessage;-;+15551234` → DM (`;-;` is the DM marker)
+ *   - `chat_id:<id>` / `chat_identifier:<id>` → group (list-form targets)
+ *   - `imessage:<handle>` / `sms:<handle>` / bare handle → DM
+ *
+ * Keep in sync with the BlueBubbles plugin: any new target shape that flips
+ * group/DM should also update `inferBlueBubblesTargetChatType` over there.
+ */
+function inferBluebubblesCronMirrorPeerKind(rawTarget: string): "direct" | "group" {
+  if (rawTarget.includes(";+;")) {
+    return "group";
+  }
+  if (rawTarget.includes(";-;")) {
+    return "direct";
+  }
+  const stripped = rawTarget.replace(/^bluebubbles:/i, "");
+  if (/^(?:chat_id|chat_identifier):/i.test(stripped)) {
+    return "group";
+  }
+  return "direct";
+}
+
+/**
  * Build a transcript mirror spec for BlueBubbles cron deliveries so the
  * target channel's session records what cron pushed. Without this mirror,
  * when a BlueBubbles recipient replies in plain text (no iMessage
@@ -111,9 +142,10 @@ export function resolveCronDeliveryBestEffort(job: CronJob): boolean {
  * Scope: BlueBubbles only. Other channels return undefined — callers keep
  * the previous behavior of not mirroring cron output.
  *
- * Assumes BlueBubbles cron targets are group chats. If a cron ever targets
- * a BB direct DM, the group-shaped session key will not match that DM's
- * actual session key and the mirror will land in the wrong transcript.
+ * Group-vs-DM is inferred from the target shape (see
+ * inferBluebubblesCronMirrorPeerKind) so a cron targeting a direct iMessage
+ * recipient gets a DM-shaped session key instead of mis-routing the
+ * transcript into a non-existent group session.
  * Guarded best-effort: resolveAgentRoute failures return undefined so the
  * delivery itself is never blocked.
  */
@@ -128,8 +160,8 @@ function buildBluebubblesCronMirror(params: {
       agentId?: string;
       text: string;
       idempotencyKey: string;
-      isGroup: true;
-      groupId: string;
+      isGroup: boolean;
+      groupId?: string;
     }
   | undefined {
   const channel = normalizeLowercaseStringOrEmpty(params.delivery.channel);
@@ -147,12 +179,13 @@ function buildBluebubblesCronMirror(params: {
   if (!text) {
     return undefined;
   }
+  const peerKind = inferBluebubblesCronMirrorPeerKind(to);
   try {
     const route = resolveAgentRoute({
       cfg: params.cfg,
       channel: "bluebubbles",
       accountId: params.delivery.accountId ?? null,
-      peer: { kind: "group", id: to },
+      peer: { kind: peerKind, id: to },
     });
     if (!route.sessionKey) {
       return undefined;
@@ -164,8 +197,10 @@ function buildBluebubblesCronMirror(params: {
       // Reuse the delivery idempotency key so retries of the same cron run
       // do not append duplicate transcript entries.
       idempotencyKey: params.deliveryIdempotencyKey,
-      isGroup: true,
-      groupId: to,
+      isGroup: peerKind === "group",
+      // Only set groupId for group sessions; DM sessions have no group id
+      // and outbound consumers branch on isGroup before reading groupId.
+      ...(peerKind === "group" ? { groupId: to } : {}),
     };
   } catch {
     return undefined;
@@ -731,9 +766,10 @@ export async function dispatchCronDelivery(
       // context cannot be reconstructed from the reply itself. Other
       // channels leave mirror unset and keep current behavior.
       //
-      // Assumes BlueBubbles cron targets are always group chats; direct DM
-      // cron to self would resolve to a wrong session key. Revisit if that
-      // use case shows up.
+      // DM vs group is inferred from the target string shape (see
+      // inferBluebubblesCronMirrorPeerKind) so a cron targeting a direct
+      // iMessage recipient lands in the DM session, not a fabricated
+      // group session.
       const bluebubblesMirror = buildBluebubblesCronMirror({
         cfg: params.cfgWithAgentDefaults,
         delivery: {
