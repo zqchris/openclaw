@@ -151,6 +151,7 @@ function makeBaseParams(overrides: {
     } as never,
     agentId: "main",
     agentSessionKey: "agent:main",
+    runSessionKey: "agent:main:cron:oura-daily:run:test-run-id",
     sessionId: "test-session-id",
     runStartedAt: Date.now(),
     runEndedAt: Date.now(),
