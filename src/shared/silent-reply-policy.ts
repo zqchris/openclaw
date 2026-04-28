@@ -1,3 +1,4 @@
+import { parseThreadSessionSuffix } from "../sessions/session-key-utils.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 
 export type SilentReplyPolicy = "allow" | "disallow";
@@ -70,7 +71,14 @@ export function classifySilentReplyConversationType(params: {
   if (normalizedSessionKey.includes(":group:") || normalizedSessionKey.includes(":channel:")) {
     return "group";
   }
-  if (normalizedSessionKey.includes(":thread:")) {
+  // Check for `:thread:` as a structured suffix rather than a free-form
+  // substring, so a caller-supplied session key cannot embed the marker
+  // mid-string and force the conversation type to `internal` (which would
+  // suppress silent-reply rewrites that should otherwise apply). The trusted
+  // shape is `<base>:thread:<id>` produced by internal subagent / ACP / cron
+  // spawn paths (CWE-840).
+  const { threadId } = parseThreadSessionSuffix(params.sessionKey);
+  if (threadId) {
     return "internal";
   }
   if (normalizedSessionKey.includes(":direct:") || normalizedSessionKey.includes(":dm:")) {
