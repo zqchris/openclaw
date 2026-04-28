@@ -1271,11 +1271,15 @@ async function processMessageAfterDedupe(
       }
       replyToShortId = cached.shortId;
       if (core.logging.shouldLogVerbose()) {
-        const preview = (cached.body ?? "").replace(/\s+/g, " ").slice(0, 120);
+        // Quoted-message body is end-user content (potentially private chat
+        // text). Verbose logs may be persisted or shipped to remote
+        // aggregators, so log only metadata (length, presence) — never the
+        // text itself (CWE-532).
+        const bodyLen = (cached.body ?? "").length;
         logVerbose(
           core,
           runtime,
-          `reply-context cache hit replyToId=${replyToId} sender=${replyToSender ?? ""} body="${preview}"`,
+          `reply-context cache hit replyToId=${sanitizeForLog(replyToId, 80)} sender=${sanitizeForLog(replyToSender ?? "", 80)} bodyLen=${bodyLen}`,
         );
       }
     }
@@ -1302,14 +1306,13 @@ async function processMessageAfterDedupe(
             replyToSender = fetched.sender;
           }
           if (core.logging.shouldLogVerbose()) {
-            const preview = sanitizeForLog(
-              (fetched.text ?? "").replace(/\s+/g, " ").slice(0, 120),
-              120,
-            );
+            // Same redaction rationale as the cache-hit path above: log only
+            // metadata, not the quoted text itself.
+            const bodyLen = (fetched.text ?? "").length;
             logVerbose(
               core,
               runtime,
-              `reply-context API fallback replyToId=${sanitizeForLog(replyToId, 80)} sender=${sanitizeForLog(replyToSender ?? "", 80)} body="${preview}"`,
+              `reply-context API fallback replyToId=${sanitizeForLog(replyToId, 80)} sender=${sanitizeForLog(replyToSender ?? "", 80)} bodyLen=${bodyLen}`,
             );
           }
         }
