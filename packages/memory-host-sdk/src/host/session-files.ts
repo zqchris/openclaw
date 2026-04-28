@@ -337,7 +337,15 @@ export async function listSessionFilesForAgent(agentId: string): Promise<string[
 }
 
 export function sessionPathForFile(absPath: string): string {
-  return path.join("sessions", path.basename(absPath)).replace(/\\/g, "/");
+  // Use POSIX join so the result always uses `/` regardless of platform.
+  // Do NOT translate backslashes inside the basename — POSIX filenames may
+  // legally contain `\`, and rewriting them to `/` would synthesize fake
+  // path segments that bypass `excludeSourcePathRegex` and other regex/prefix
+  // logic expecting `sessions/<basename>` semantics. Strip CR/LF/TAB so the
+  // value can be embedded in log lines and corpus headers without forging
+  // additional lines (NUL is already rejected by Node's fs path layer).
+  const base = path.basename(absPath).replace(/[\r\n\t]/g, "_");
+  return path.posix.join("sessions", base);
 }
 
 async function logSessionFileReadFailure(absPath: string, err: unknown): Promise<void> {
