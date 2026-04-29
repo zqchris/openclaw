@@ -682,19 +682,21 @@ export async function buildSessionEntry(
       }
       if (message.role === "user") {
         if (hasInternalSystemUserProvenance(message)) {
-          dropNextAssistantForInternalSystem = true;
+          dropAssistantsForInternalSystemRun = true;
           continue;
         }
-        // A real or inter-session user record means the prior internal-system
-        // user record was orphaned (no paired assistant yet). Clear the flag
-        // so the next assistant is treated as paired with this real user, not
-        // with the orphan cron/heartbeat injection.
-        dropNextAssistantForInternalSystem = false;
+        // Any non-internal-system user record (real input or inter-session
+        // relay) opens a new turn — clear the pair-drop flag so subsequent
+        // assistants belong to this user, not the prior cron/heartbeat run.
+        dropAssistantsForInternalSystemRun = false;
         if (hasInterSessionUserProvenance(message)) {
           continue;
         }
-      } else if (message.role === "assistant" && dropNextAssistantForInternalSystem) {
-        dropNextAssistantForInternalSystem = false;
+      } else if (message.role === "assistant" && dropAssistantsForInternalSystemRun) {
+        // Stay set: a single cron/heartbeat tick may emit multiple assistant
+        // turns (tool calls + final reply) interleaved with non-user/non-
+        // assistant `toolResult` records. The flag persists until a real
+        // user record arrives.
         continue;
       }
       const rawText = collectRawSessionText(message.content);

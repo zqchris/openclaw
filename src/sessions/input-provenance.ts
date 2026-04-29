@@ -145,7 +145,10 @@ export function isInternalSystemInputProvenance(value: unknown): boolean {
 // metadata field — never via user-controlled content patterns — so a real
 // user typing `[cron:fakeId]` in their own prompt cannot trigger this.
 // Used by the dreaming corpus ingestion in session-files.buildSessionEntry()
-// to drop the user record and its paired assistant reply together.
+// to drop the user record and every assistant turn that follows in the
+// same internal-system run (a single cron tick can produce many assistant
+// turns interleaved with toolResult records before the next real user
+// record arrives).
 export function hasInternalSystemUserProvenance(
   message: { role?: unknown; provenance?: unknown } | undefined,
 ): boolean {
