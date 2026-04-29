@@ -9,6 +9,7 @@ import {
   hasInterSessionUserProvenance,
   isCompactionCheckpointTranscriptFileName,
   isCronRunSessionKey,
+  hasInternalSystemUserProvenance,
   isExecCompletionEvent,
   isHeartbeatUserMessage,
   isSessionArchiveArtifactName,
@@ -679,7 +680,21 @@ export async function buildSessionEntry(
       if (message.role !== "user" && message.role !== "assistant") {
         continue;
       }
-      if (message.role === "user" && hasInterSessionUserProvenance(message)) {
+      if (message.role === "user") {
+        if (hasInternalSystemUserProvenance(message)) {
+          dropNextAssistantForInternalSystem = true;
+          continue;
+        }
+        // A real or inter-session user record means the prior internal-system
+        // user record was orphaned (no paired assistant yet). Clear the flag
+        // so the next assistant is treated as paired with this real user, not
+        // with the orphan cron/heartbeat injection.
+        dropNextAssistantForInternalSystem = false;
+        if (hasInterSessionUserProvenance(message)) {
+          continue;
+        }
+      } else if (message.role === "assistant" && dropNextAssistantForInternalSystem) {
+        dropNextAssistantForInternalSystem = false;
         continue;
       }
       const rawText = collectRawSessionText(message.content);

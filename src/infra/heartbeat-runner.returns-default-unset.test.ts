@@ -779,6 +779,10 @@ describe("runHeartbeatOnce", () => {
           OriginatingChannel: "whatsapp",
           OriginatingTo: "120363401234567890@g.us",
           Provider: "heartbeat",
+          // Heartbeat-style internal injection must mark the user record so
+          // dreaming corpus ingestion pair-drops the assistant ack
+          // (HEARTBEAT_OK and friends).
+          InputProvenance: { kind: "internal_system", sourceTool: "heartbeat" },
         }),
         expect.objectContaining({ isHeartbeat: true, suppressToolErrorWarnings: false }),
         cfg,
@@ -1748,10 +1752,20 @@ tasks:
       });
       expect(res.status).toBe("ran");
       expect(sendWhatsApp).toHaveBeenCalledTimes(0);
-      const calledCtx = replySpy.mock.calls[0]?.[0] as { Provider?: string; Body?: string };
+      const calledCtx = replySpy.mock.calls[0]?.[0] as {
+        Provider?: string;
+        Body?: string;
+        InputProvenance?: { kind?: string; sourceTool?: string };
+      };
       expect(calledCtx.Provider).toBe("cron-event");
       expect(calledCtx.Body).toContain("Handle this reminder internally");
       expect(calledCtx.Body).not.toContain("Please relay this reminder to the user");
+      // Cron-triggered injections must mark the user record as
+      // internal_system so dreaming corpus drops the assistant ack pair.
+      expect(calledCtx.InputProvenance).toEqual({
+        kind: "internal_system",
+        sourceTool: "cron-event",
+      });
     } finally {
       replySpy.mockReset();
     }
@@ -1809,11 +1823,16 @@ tasks:
         Provider?: string;
         Body?: string;
         ForceSenderIsOwnerFalse?: boolean;
+        InputProvenance?: { kind?: string; sourceTool?: string };
       };
       expect(calledCtx.Provider).toBe("exec-event");
       expect(calledCtx.ForceSenderIsOwnerFalse).toBe(true);
       expect(calledCtx.Body).toContain("Handle the result internally");
       expect(calledCtx.Body).not.toContain("Please relay the command output to the user");
+      expect(calledCtx.InputProvenance).toEqual({
+        kind: "internal_system",
+        sourceTool: "exec-event",
+      });
     } finally {
       replySpy.mockReset();
     }
