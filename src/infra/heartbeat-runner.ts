@@ -74,6 +74,7 @@ import {
   toAgentStoreSessionKey,
 } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import type { InputProvenance } from "../sessions/input-provenance.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -1205,6 +1206,18 @@ export async function runHeartbeatOnce(opts: {
     consumeSystemEventEntries(sessionKey, preflight.pendingEventEntries);
   };
 
+  const sourceTool = hasExecCompletion ? "exec-event" : hasCronEvents ? "cron-event" : "heartbeat";
+  // Mark the user record this run will append as an internal-system injection
+  // so the dreaming corpus ingestion can drop both the user prompt *and* its
+  // paired assistant reply (see hasInternalSystemUserProvenance in
+  // session-files.buildSessionEntry). Without this, cron/heartbeat replies
+  // (Querying MoviePilot, HEARTBEAT_OK, financial summary chatter) leak into
+  // light-sleep candidates because the user record carrying the injection
+  // sits inside a regular `agent:X:main` transcript.
+  const internalSystemProvenance: InputProvenance = {
+    kind: "internal_system",
+    sourceTool,
+  };
   const ctx = {
     Body: appendCronStyleCurrentTimeLine(prompt, cfg, startedAt),
     From: sender,
@@ -1214,8 +1227,9 @@ export async function runHeartbeatOnce(opts: {
     OriginatingTo: !suppressOriginatingContext ? delivery.to : undefined,
     AccountId: delivery.accountId,
     MessageThreadId: delivery.threadId,
-    Provider: hasExecCompletion ? "exec-event" : hasCronEvents ? "cron-event" : "heartbeat",
+    Provider: sourceTool,
     SessionKey: runSessionKey,
+    InputProvenance: internalSystemProvenance,
     ForceSenderIsOwnerFalse: hasExecCompletion || hasUntrustedPendingEvents,
   };
   if (!visibility.showAlerts && !visibility.showOk && !visibility.useIndicator) {

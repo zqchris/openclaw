@@ -9,6 +9,7 @@ import {
   hasInterSessionUserProvenance,
   isCompactionCheckpointTranscriptFileName,
   isCronRunSessionKey,
+  hasInternalSystemUserProvenance,
   isExecCompletionEvent,
   isHeartbeatUserMessage,
   isSessionArchiveArtifactName,
@@ -577,6 +578,15 @@ export async function buildSessionEntry(
       false;
     const generatedByCronRun =
       opts.generatedByCronRun ?? sessionStoreClassification?.generatedByCronRun ?? false;
+    // Pair-drop state for cron/heartbeat-style internal-system user injections
+    // that landed inside a regular `agent:X:main` transcript (not an isolated
+    // cron-run session). When the user record carries
+    // `provenance.kind === "internal_system"`, we drop both the user message
+    // *and* the next assistant message so the corresponding cron/heartbeat
+    // reply does not leak into the dreaming corpus. Detection is a record-
+    // level metadata check — never user-controlled content — so a user typing
+    // `[cron:fake]` in their own prompt cannot weaponize this drop.
+    let dropNextAssistantForInternalSystem = false;
     for (let jsonlIdx = 0; jsonlIdx < lines.length; jsonlIdx++) {
       const line = lines[jsonlIdx];
       if (!line.trim()) {
@@ -607,7 +617,21 @@ export async function buildSessionEntry(
       if (message.role !== "user" && message.role !== "assistant") {
         continue;
       }
-      if (message.role === "user" && hasInterSessionUserProvenance(message)) {
+      if (message.role === "user") {
+        if (hasInternalSystemUserProvenance(message)) {
+          dropNextAssistantForInternalSystem = true;
+          continue;
+        }
+        // A real or inter-session user record means the prior internal-system
+        // user record was orphaned (no paired assistant yet). Clear the flag
+        // so the next assistant is treated as paired with this real user, not
+        // with the orphan cron/heartbeat injection.
+        dropNextAssistantForInternalSystem = false;
+        if (hasInterSessionUserProvenance(message)) {
+          continue;
+        }
+      } else if (message.role === "assistant" && dropNextAssistantForInternalSystem) {
+        dropNextAssistantForInternalSystem = false;
         continue;
       }
       const rawText = collectRawSessionText(message.content);

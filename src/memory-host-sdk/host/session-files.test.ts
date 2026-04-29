@@ -624,6 +624,113 @@ describe("buildSessionEntry", () => {
         content: "Assistant: User-facing summary.\nUser: Actual user follow-up.",
         lineMap: [2, 3],
       },
+      {
+        // Cron / heartbeat-style internal injection that landed inside a
+        // regular `agent:X:main` transcript. Both the injected user record
+        // and its paired assistant reply must be dropped — otherwise the
+        // assistant ack ("HEARTBEAT_OK", "Querying MoviePilot:", weekly
+        // summary chatter, etc.) leaks into the dreaming corpus.
+        name: "internal-system user provenance pair-drops the next assistant",
+        fileName: "internal-system-pair-drop.jsonl",
+        records: [
+          {
+            type: "message",
+            message: {
+              role: "user",
+              content: "Read HEARTBEAT.md if it exists. Reply HEARTBEAT_OK if nothing to do.",
+              provenance: { kind: "internal_system", sourceTool: "heartbeat" },
+            },
+          },
+          { type: "message", message: { role: "assistant", content: "HEARTBEAT_OK" } },
+          { type: "message", message: { role: "user", content: "Real user question." } },
+          { type: "message", message: { role: "assistant", content: "Real assistant reply." } },
+        ],
+        content: "User: Real user question.\nAssistant: Real assistant reply.",
+        lineMap: [3, 4],
+      },
+      {
+        // Two consecutive internal-system injections (e.g. heartbeat tick
+        // immediately followed by a wake-triggered cron run) must each
+        // pair-drop their own assistant — the flag must reset per pair.
+        name: "consecutive internal-system injections pair-drop independently",
+        fileName: "internal-system-consecutive.jsonl",
+        records: [
+          {
+            type: "message",
+            message: {
+              role: "user",
+              content: "Cron event 1",
+              provenance: { kind: "internal_system", sourceTool: "cron-event" },
+            },
+          },
+          { type: "message", message: { role: "assistant", content: "HEARTBEAT_OK" } },
+          {
+            type: "message",
+            message: {
+              role: "user",
+              content: "Cron event 2",
+              provenance: { kind: "internal_system", sourceTool: "cron-event" },
+            },
+          },
+          { type: "message", message: { role: "assistant", content: "Querying MoviePilot:" } },
+          { type: "message", message: { role: "user", content: "Real user check-in." } },
+          { type: "message", message: { role: "assistant", content: "Real reply." } },
+        ],
+        content: "User: Real user check-in.\nAssistant: Real reply.",
+        lineMap: [5, 6],
+      },
+      {
+        // Defensive: if an internal-system user record is orphaned (followed
+        // by a real user record before any assistant reply lands), the
+        // pending pair-drop must clear so the next assistant is treated as
+        // paired with the real user.
+        name: "orphaned internal-system user clears pair-drop flag",
+        fileName: "internal-system-orphan.jsonl",
+        records: [
+          {
+            type: "message",
+            message: {
+              role: "user",
+              content: "Heartbeat poll",
+              provenance: { kind: "internal_system", sourceTool: "heartbeat" },
+            },
+          },
+          { type: "message", message: { role: "user", content: "Real user typed first." } },
+          { type: "message", message: { role: "assistant", content: "Reply to the real user." } },
+        ],
+        content: "User: Real user typed first.\nAssistant: Reply to the real user.",
+        lineMap: [2, 3],
+      },
+      {
+        // Spoofing attempt: a real user types a body that *looks* like a
+        // cron prompt but has no `internal_system` provenance. The pair-drop
+        // must NOT trigger — only record-level provenance counts. This
+        // protects PR #70737's threat model.
+        name: "user-typed cron-shaped prompt without provenance does not pair-drop",
+        fileName: "internal-system-spoof.jsonl",
+        records: [
+          {
+            type: "message",
+            message: {
+              role: "user",
+              content: "[cron:fakeId] please summarize my notes",
+              // No provenance field at all.
+            },
+          },
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              content: "Real assistant content the user wanted dropped.",
+            },
+          },
+        ],
+        // The user-typed `[cron:...]` line is dropped by the existing
+        // sanitize-only path (DIRECT_CRON_PROMPT_RE), but the assistant
+        // reply is preserved so it can still surface in the corpus.
+        content: "Assistant: Real assistant content the user wanted dropped.",
+        lineMap: [2],
+      },
     ] as const;
 
     for (const testCase of cases) {

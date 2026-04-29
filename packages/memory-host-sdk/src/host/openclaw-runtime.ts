@@ -136,7 +136,10 @@ export type { OpenClawPluginApi } from "../../../../src/plugins/types.js";
 // Shared session/text utilities.
 export { defaultRuntime } from "../../../../src/runtime.js";
 export { parseAgentSessionKey } from "../../../../src/routing/session-key.js";
-export { hasInterSessionUserProvenance } from "../../../../src/sessions/input-provenance.js";
+export {
+  hasInternalSystemUserProvenance,
+  hasInterSessionUserProvenance,
+} from "../../../../src/sessions/input-provenance.js";
 export { isCronRunSessionKey } from "../../../../src/sessions/session-key-utils.js";
 export { onSessionTranscriptUpdate } from "../../../../src/sessions/transcript-events.js";
 export { formatDocsLink } from "../../../../src/terminal/links.js";

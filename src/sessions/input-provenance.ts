@@ -134,3 +134,23 @@ export function annotateInterSessionPromptText(
   const body = removeFirstInterSessionPromptPrefix(text);
   return `${prefix}\n${body}`;
 }
+
+export function isInternalSystemInputProvenance(value: unknown): boolean {
+  return normalizeInputProvenance(value)?.kind === "internal_system";
+}
+
+// Cron / heartbeat-style internal system injections. The user record carries
+// `provenance.kind === "internal_system"` set at write time by the runner
+// (see heartbeat-runner ctx construction). Detected here at a record-level
+// metadata field — never via user-controlled content patterns — so a real
+// user typing `[cron:fakeId]` in their own prompt cannot trigger this.
+// Used by the dreaming corpus ingestion in session-files.buildSessionEntry()
+// to drop the user record and its paired assistant reply together.
+export function hasInternalSystemUserProvenance(
+  message: { role?: unknown; provenance?: unknown } | undefined,
+): boolean {
+  if (!message || message.role !== "user") {
+    return false;
+  }
+  return isInternalSystemInputProvenance(message.provenance);
+}
