@@ -580,13 +580,17 @@ export async function buildSessionEntry(
       opts.generatedByCronRun ?? sessionStoreClassification?.generatedByCronRun ?? false;
     // Pair-drop state for cron/heartbeat-style internal-system user injections
     // that landed inside a regular `agent:X:main` transcript (not an isolated
-    // cron-run session). When the user record carries
-    // `provenance.kind === "internal_system"`, we drop both the user message
-    // *and* the next assistant message so the corresponding cron/heartbeat
-    // reply does not leak into the dreaming corpus. Detection is a record-
-    // level metadata check — never user-controlled content — so a user typing
-    // `[cron:fake]` in their own prompt cannot weaponize this drop.
-    let dropNextAssistantForInternalSystem = false;
+    // cron-run session). When a user record carries
+    // `provenance.kind === "internal_system"`, we drop the user message *and
+    // every assistant turn that belongs to that run* — a single cron tick
+    // can produce many assistant turns (tool calls interleaved with
+    // toolResult records, then a final reply), so the flag must persist
+    // until the next real (or inter-session) user record opens a new turn.
+    //
+    // Detection is a record-level metadata check — never user-controlled
+    // content — so a user typing `[cron:fake]` in their own prompt cannot
+    // weaponize this drop (PR #70737 review threat model holds).
+    let dropAssistantsForInternalSystemRun = false;
     for (let jsonlIdx = 0; jsonlIdx < lines.length; jsonlIdx++) {
       const line = lines[jsonlIdx];
       if (!line.trim()) {
@@ -619,19 +623,21 @@ export async function buildSessionEntry(
       }
       if (message.role === "user") {
         if (hasInternalSystemUserProvenance(message)) {
-          dropNextAssistantForInternalSystem = true;
+          dropAssistantsForInternalSystemRun = true;
           continue;
         }
-        // A real or inter-session user record means the prior internal-system
-        // user record was orphaned (no paired assistant yet). Clear the flag
-        // so the next assistant is treated as paired with this real user, not
-        // with the orphan cron/heartbeat injection.
-        dropNextAssistantForInternalSystem = false;
+        // Any non-internal-system user record (real input or inter-session
+        // relay) opens a new turn — clear the pair-drop flag so subsequent
+        // assistants belong to this user, not the prior cron/heartbeat run.
+        dropAssistantsForInternalSystemRun = false;
         if (hasInterSessionUserProvenance(message)) {
           continue;
         }
-      } else if (message.role === "assistant" && dropNextAssistantForInternalSystem) {
-        dropNextAssistantForInternalSystem = false;
+      } else if (message.role === "assistant" && dropAssistantsForInternalSystemRun) {
+        // Stay set: a single cron/heartbeat tick may emit multiple assistant
+        // turns (tool calls + final reply) interleaved with non-user/non-
+        // assistant `toolResult` records. The flag persists until a real
+        // user record arrives.
         continue;
       }
       const rawText = collectRawSessionText(message.content);

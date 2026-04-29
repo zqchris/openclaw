@@ -649,6 +649,62 @@ describe("buildSessionEntry", () => {
         lineMap: [3, 4],
       },
       {
+        // A single cron/heartbeat tick can produce many assistant turns:
+        // initial tool call, toolResult records, follow-up assistant turns,
+        // then a final reply. ALL of those assistant turns must be dropped
+        // until the next real user record arrives. toolResult records are
+        // role: "toolResult" (neither user nor assistant) and must not
+        // clear the pair-drop flag.
+        name: "internal-system run drops every assistant turn until next real user",
+        fileName: "internal-system-multi-turn.jsonl",
+        records: [
+          {
+            type: "message",
+            message: {
+              role: "user",
+              content: "Read HEARTBEAT.md if it exists. Reply HEARTBEAT_OK if nothing to do.",
+              provenance: { kind: "internal_system", sourceTool: "heartbeat" },
+            },
+          },
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              content: "I'll read the HEARTBEAT.md file from the workspace.",
+            },
+          },
+          {
+            type: "message",
+            message: { role: "toolResult", content: "# HEARTBEAT.md ..." },
+          },
+          {
+            type: "message",
+            message: { role: "assistant", content: "Querying MoviePilot:" },
+          },
+          {
+            type: "message",
+            message: { role: "toolResult", content: "(api response)" },
+          },
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              content: "No TV series meet the completion criteria. HEARTBEAT_OK",
+            },
+          },
+          {
+            type: "message",
+            message: { role: "user", content: "Real user follow-up question." },
+          },
+          {
+            type: "message",
+            message: { role: "assistant", content: "Real reply." },
+          },
+        ],
+        content: "User: Real user follow-up question.\nAssistant: Real reply.",
+        lineMap: [7, 8],
+      },
+      {
         // Two consecutive internal-system injections (e.g. heartbeat tick
         // immediately followed by a wake-triggered cron run) must each
         // pair-drop their own assistant — the flag must reset per pair.
