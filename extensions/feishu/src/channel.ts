@@ -473,7 +473,7 @@ function jsonActionResult(details: Record<string, unknown>) {
 
 function readFirstString(
   params: Record<string, unknown>,
-  keys: string[],
+  keys: readonly string[],
   fallback?: string | null,
 ): string | undefined {
   for (const key of keys) {
@@ -504,6 +504,43 @@ function readOptionalNumber(params: Record<string, unknown>, keys: string[]): nu
   return undefined;
 }
 
+const FEISHU_MESSAGE_ID_PARAMS = ["messageId", "message_id", "replyTo", "reply_to"] as const;
+
+const FEISHU_CHAT_ID_PARAMS = [
+  "chatId",
+  "chat_id",
+  "channelId",
+  "channel_id",
+  "to",
+  "target",
+] as const;
+
+const FEISHU_MEMBER_ID_PARAMS = [
+  "memberId",
+  "member_id",
+  "userId",
+  "user_id",
+  "openId",
+  "open_id",
+  "unionId",
+  "union_id",
+] as const;
+
+/**
+ * Build an actionable "missing required param" message for Feishu tool calls.
+ * Listing the accepted aliases lets an agent self-correct on the next attempt
+ * instead of guessing — most Feishu read/edit/pin failures are LLM calls that
+ * forgot to pass `messageId` or used a different key name.
+ */
+function buildMissingParamMessage(
+  action: string,
+  paramLabel: string,
+  aliases: readonly string[],
+): string {
+  const aliasHint = aliases.length > 0 ? ` Pass one of: ${aliases.join(", ")}.` : "";
+  return `Feishu ${action} requires ${paramLabel}.${aliasHint}`;
+}
+
 function resolveFeishuActionTarget(ctx: {
   params: Record<string, unknown>;
   toolContext?: { currentChannelId?: string } | null;
@@ -515,11 +552,7 @@ function resolveFeishuChatId(ctx: {
   params: Record<string, unknown>;
   toolContext?: { currentChannelId?: string } | null;
 }): string | undefined {
-  const raw = readFirstString(
-    ctx.params,
-    ["chatId", "chat_id", "channelId", "channel_id", "to", "target"],
-    ctx.toolContext?.currentChannelId,
-  );
+  const raw = readFirstString(ctx.params, FEISHU_CHAT_ID_PARAMS, ctx.toolContext?.currentChannelId);
   if (!raw) {
     return undefined;
   }
@@ -533,20 +566,11 @@ function resolveFeishuChatId(ctx: {
 }
 
 function resolveFeishuMessageId(params: Record<string, unknown>): string | undefined {
-  return readFirstString(params, ["messageId", "message_id", "replyTo", "reply_to"]);
+  return readFirstString(params, FEISHU_MESSAGE_ID_PARAMS);
 }
 
 function resolveFeishuMemberId(params: Record<string, unknown>): string | undefined {
-  return readFirstString(params, [
-    "memberId",
-    "member_id",
-    "userId",
-    "user_id",
-    "openId",
-    "open_id",
-    "unionId",
-    "union_id",
-  ]);
+  return readFirstString(params, FEISHU_MEMBER_ID_PARAMS);
 }
 
 function resolveFeishuMemberIdType(
@@ -706,7 +730,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
             const replyToMessageId =
               ctx.action === "thread-reply" ? resolveFeishuMessageId(ctx.params) : undefined;
             if (ctx.action === "thread-reply" && !replyToMessageId) {
-              throw new Error("Feishu thread-reply requires messageId.");
+              throw new Error(
+                buildMissingParamMessage("thread-reply", "messageId", FEISHU_MESSAGE_ID_PARAMS),
+              );
             }
             const presentation = normalizeMessagePresentation(ctx.params.presentation);
             const text = readFirstString(ctx.params, ["text", "message"]);
@@ -774,7 +800,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "read") {
             const messageId = resolveFeishuMessageId(ctx.params);
             if (!messageId) {
-              throw new Error("Feishu read requires messageId.");
+              throw new Error(
+                buildMissingParamMessage("read", "messageId", FEISHU_MESSAGE_ID_PARAMS),
+              );
             }
             const { getMessageFeishu } = await loadFeishuChannelRuntime();
             const message = await getMessageFeishu({
@@ -802,7 +830,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "edit") {
             const messageId = resolveFeishuMessageId(ctx.params);
             if (!messageId) {
-              throw new Error("Feishu edit requires messageId.");
+              throw new Error(
+                buildMissingParamMessage("edit", "messageId", FEISHU_MESSAGE_ID_PARAMS),
+              );
             }
             const text = readFirstString(ctx.params, ["text", "message"]);
             const card =
@@ -828,7 +858,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "pin") {
             const messageId = resolveFeishuMessageId(ctx.params);
             if (!messageId) {
-              throw new Error("Feishu pin requires messageId.");
+              throw new Error(
+                buildMissingParamMessage("pin", "messageId", FEISHU_MESSAGE_ID_PARAMS),
+              );
             }
             const { createPinFeishu } = await loadFeishuChannelRuntime();
             const pin = await createPinFeishu({
@@ -842,7 +874,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "unpin") {
             const messageId = resolveFeishuMessageId(ctx.params);
             if (!messageId) {
-              throw new Error("Feishu unpin requires messageId.");
+              throw new Error(
+                buildMissingParamMessage("unpin", "messageId", FEISHU_MESSAGE_ID_PARAMS),
+              );
             }
             const { removePinFeishu } = await loadFeishuChannelRuntime();
             await removePinFeishu({
@@ -861,7 +895,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "list-pins") {
             const chatId = resolveFeishuChatId(ctx);
             if (!chatId) {
-              throw new Error("Feishu list-pins requires chatId or channelId.");
+              throw new Error(
+                buildMissingParamMessage("list-pins", "chatId or channelId", FEISHU_CHAT_ID_PARAMS),
+              );
             }
             const { listPinsFeishu } = await loadFeishuChannelRuntime();
             const result = await listPinsFeishu({
@@ -884,7 +920,13 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "channel-info") {
             const chatId = resolveFeishuChatId(ctx);
             if (!chatId) {
-              throw new Error("Feishu channel-info requires chatId or channelId.");
+              throw new Error(
+                buildMissingParamMessage(
+                  "channel-info",
+                  "chatId or channelId",
+                  FEISHU_CHAT_ID_PARAMS,
+                ),
+              );
             }
             const runtime = await loadFeishuChannelRuntime();
             const client = await createFeishuActionClient(account);
@@ -934,7 +976,12 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
             }
             const chatId = resolveFeishuChatId(ctx);
             if (!chatId) {
-              throw new Error("Feishu member-info requires memberId or chatId/channelId.");
+              throw new Error(
+                buildMissingParamMessage("member-info", "memberId or chatId/channelId", [
+                  ...FEISHU_MEMBER_ID_PARAMS,
+                  ...FEISHU_CHAT_ID_PARAMS,
+                ]),
+              );
             }
             const members = await runtime.getChatMembers(
               client,
@@ -1026,7 +1073,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "react") {
             const messageId = resolveFeishuMessageId(ctx.params);
             if (!messageId) {
-              throw new Error("Feishu reaction requires messageId.");
+              throw new Error(
+                buildMissingParamMessage("react", "messageId", FEISHU_MESSAGE_ID_PARAMS),
+              );
             }
             const emoji = typeof ctx.params.emoji === "string" ? ctx.params.emoji.trim() : "";
             const remove = ctx.params.remove === true;
@@ -1093,7 +1142,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           if (ctx.action === "reactions") {
             const messageId = resolveFeishuMessageId(ctx.params);
             if (!messageId) {
-              throw new Error("Feishu reactions lookup requires messageId.");
+              throw new Error(
+                buildMissingParamMessage("reactions", "messageId", FEISHU_MESSAGE_ID_PARAMS),
+              );
             }
             const { listReactionsFeishu } = await loadFeishuChannelRuntime();
             const reactions = await listReactionsFeishu({
