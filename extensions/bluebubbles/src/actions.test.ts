@@ -334,7 +334,7 @@ describe("bluebubblesMessageActions", () => {
       ).rejects.toThrow("requires Private API");
     });
 
-    it("throws when messageId is missing", async () => {
+    it("throws when messageId is missing and toolContext lacks currentMessageId", async () => {
       const cfg: OpenClawConfig = {
         channels: {
           bluebubbles: {
@@ -351,6 +351,41 @@ describe("bluebubblesMessageActions", () => {
           accountId: null,
         }),
       ).rejects.toThrow("messageId");
+    });
+
+    it("falls back to toolContext.currentMessageId when messageId is omitted", async () => {
+      vi.mocked(resolveBlueBubblesMessageId).mockReturnValueOnce("ctx-message-uuid");
+
+      const cfg: OpenClawConfig = {
+        channels: {
+          bluebubbles: {
+            serverUrl: "http://localhost:1234",
+            password: "test-password",
+          },
+        },
+      };
+
+      await callHandleAction({
+        action: "react",
+        params: { emoji: "❤️", chatGuid: "iMessage;-;+15551234567" },
+        cfg,
+        accountId: null,
+        toolContext: {
+          currentChannelId: "bluebubbles:chat_guid:iMessage;-;+15551234567",
+          currentMessageId: "ctx-message-uuid",
+        },
+      });
+
+      expect(resolveBlueBubblesMessageId).toHaveBeenCalledWith(
+        "ctx-message-uuid",
+        expect.objectContaining({ requireKnownShortId: true }),
+      );
+      expect(sendBlueBubblesReaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageGuid: "ctx-message-uuid",
+          emoji: "❤️",
+        }),
+      );
     });
 
     it("throws when chatGuid cannot be resolved", async () => {
