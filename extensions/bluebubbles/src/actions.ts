@@ -5,6 +5,7 @@ import {
   readNumberParam,
   readReactionParams,
   readStringParam,
+  resolveReactionMessageId,
 } from "openclaw/plugin-sdk/channel-actions";
 import { createLazyRuntimeNamedExport } from "openclaw/plugin-sdk/lazy-runtime";
 import { isPrivateNetworkOptInEnabled } from "openclaw/plugin-sdk/ssrf-runtime";
@@ -222,7 +223,14 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
           "BlueBubbles react requires emoji parameter. Use action=react with emoji=<emoji> and messageId=<message_id>.",
         );
       }
-      const rawMessageId = readStringParam(params, "messageId");
+      // Fall back to the inbound message that triggered this turn when the
+      // agent omits messageId (matches Telegram's react action). The schema
+      // does not surface messageId as required, so without this fallback the
+      // tool throws and the error text leaks back into the chat.
+      const resolved = resolveReactionMessageId({ args: params, toolContext });
+      const rawMessageId = (
+        typeof resolved === "number" ? String(resolved) : (resolved ?? "")
+      ).trim();
       if (!rawMessageId) {
         throw new Error(
           "BlueBubbles react requires messageId parameter (the message ID to react to). " +
