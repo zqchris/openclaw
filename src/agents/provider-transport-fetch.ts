@@ -18,6 +18,18 @@ import {
 
 const DEFAULT_MAX_SDK_RETRY_WAIT_SECONDS = 60;
 
+// Allow fake-IP DNS proxy ranges (RFC 2544 benchmark 198.18.0.0/15 and IPv6
+// ULA fc00::/7) so model API calls work behind sing-box / Clash / Surge fake-IP
+// proxy setups. The model transport still rejects loopback, RFC1918, link-
+// local, and cloud-metadata addresses — only the fake-IP-only special-use
+// ranges are exempted, matching the public web_fetch policy extended in
+// #74571 and the trusted web-tool endpoint policy in
+// `agents/tools/web-guarded-fetch.ts`.
+const MODEL_TRANSPORT_FAKE_IP_SSRF_POLICY: SsrFPolicy = {
+  allowRfc2544BenchmarkRange: true,
+  allowIpv6UniqueLocalRange: true,
+};
+
 function hasReadableSseData(block: string): boolean {
   const dataLines = block
     .split(/\r\n|\n|\r/)
