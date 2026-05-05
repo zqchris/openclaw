@@ -1079,7 +1079,7 @@ describe("memory-core dreaming phases", () => {
     ]);
   });
 
-  it("skips isolated cron run transcripts during session ingestion", async () => {
+  it("skips isolated cron transcripts that use the stable cron session key", async () => {
     const workspaceDir = await createDreamingWorkspace();
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
@@ -1112,9 +1112,113 @@ describe("memory-core dreaming phases", () => {
     await fs.writeFile(
       path.join(sessionsDir, "sessions.json"),
       JSON.stringify({
-        "agent:main:cron:job-1:run:run-1": {
+        "agent:main:cron:job-1": {
           sessionId: "cron-run",
           sessionFile: transcriptPath,
+          updatedAt: Date.now(),
+        },
+      }),
+      "utf-8",
+    );
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: {
+            workspace: workspaceDir,
+          },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: {
+                    light: {
+                      enabled: true,
+                      limit: 20,
+                      lookbackDays: 7,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      await beforeAgentReply(
+        { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+        { trigger: "heartbeat", workspaceDir },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const sessionIngestion = JSON.parse(
+      await fs.readFile(
+        path.join(workspaceDir, "memory", ".dreams", "session-ingestion.json"),
+        "utf-8",
+      ),
+    ) as {
+      files: Record<
+        string,
+        {
+          lineCount: number;
+          lastContentLine: number;
+          contentHash: string;
+        }
+      >;
+    };
+    expect(Object.values(sessionIngestion.files)).toEqual([
+      expect.objectContaining({
+        lineCount: 0,
+        lastContentLine: 0,
+        contentHash: expect.any(String),
+      }),
+    ]);
+  });
+
+  it("skips rotated cron transcripts when the stable cron session key maps to the live file", async () => {
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const liveTranscriptPath = path.join(sessionsDir, "cron-run.jsonl");
+    const rotatedTranscriptPath = path.join(
+      sessionsDir,
+      "cron-run.jsonl.deleted.2026-04-05T18-03-00.000Z",
+    );
+    await fs.writeFile(
+      rotatedTranscriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:02:00.000Z",
+            content: "Status: Lv2 prosperity 4967. Cron result should stay out.",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-1": {
+          sessionId: "cron-run",
+          sessionFile: liveTranscriptPath,
           updatedAt: Date.now(),
         },
       }),

@@ -129,6 +129,7 @@ export type MemoryDreamingConfig = {
   enabled: boolean;
   frequency: string;
   timezone?: string;
+  excludeAgents: string[];
   verboseLogging: boolean;
   storage: MemoryDreamingStorageConfig;
   execution: {
@@ -262,6 +263,21 @@ function normalizeStringArray<T extends string>(
   return normalized.length > 0 ? normalized : [...fallback];
 }
 
+function normalizeAgentIdArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const normalized: string[] = [];
+  for (const entry of value) {
+    const normalizedEntry = normalizeOptionalLowercaseString(entry);
+    if (!normalizedEntry || normalized.includes(normalizedEntry)) {
+      continue;
+    }
+    normalized.push(normalizedEntry);
+  }
+  return normalized;
+}
+
 function normalizeStorageMode(value: unknown): MemoryDreamingStorageMode {
   const normalized = normalizeOptionalLowercaseString(value);
   if (normalized === "inline" || normalized === "separate" || normalized === "both") {
@@ -392,6 +408,7 @@ export function resolveMemoryDreamingConfig(params: {
     enabled: normalizeBoolean(dreaming?.enabled, DEFAULT_MEMORY_DREAMING_ENABLED),
     frequency,
     ...(timezone ? { timezone } : {}),
+    excludeAgents: normalizeAgentIdArray(dreaming?.excludeAgents),
     verboseLogging: normalizeBoolean(
       dreaming?.verboseLogging,
       DEFAULT_MEMORY_DREAMING_VERBOSE_LOGGING,
@@ -612,6 +629,11 @@ export function resolveMemoryDreamingWorkspaces(
   cfg: OpenClawConfig,
   options: MemoryDreamingWorkspaceOptions = {},
 ): MemoryDreamingWorkspace[] {
+  const dreamingConfig = resolveMemoryDreamingConfig({
+    pluginConfig: resolveMemoryDreamingPluginConfig(cfg),
+    cfg,
+  });
+  const excludedAgentIds = new Set(dreamingConfig.excludeAgents);
   const configured = Array.isArray(cfg.agents?.list) ? cfg.agents.list : [];
   const agentIds: string[] = [];
   const seenAgents = new Set<string>();
@@ -637,6 +659,9 @@ export function resolveMemoryDreamingWorkspaces(
       return;
     }
     const agentId = normalizeOptionalLowercaseString(agentIdRaw) || resolveDefaultAgentId(cfg);
+    if (excludedAgentIds.has(agentId)) {
+      return;
+    }
     const key = normalizePathForComparison(workspaceDir);
     const existing = byWorkspace.get(key);
     if (existing) {

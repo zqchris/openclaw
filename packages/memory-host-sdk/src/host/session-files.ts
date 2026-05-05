@@ -9,6 +9,7 @@ import {
   hasInterSessionUserProvenance,
   isCompactionCheckpointTranscriptFileName,
   isCronRunSessionKey,
+  isCronSessionKey,
   isExecCompletionEvent,
   isHeartbeatUserMessage,
   isSessionArchiveArtifactName,
@@ -160,8 +161,8 @@ function isDreamingNarrativeSessionStoreKey(sessionKey: string): boolean {
   return sessionSegment.startsWith(DREAMING_NARRATIVE_RUN_PREFIX);
 }
 
-function hasCronRunSessionKey(value: unknown): boolean {
-  return typeof value === "string" && isCronRunSessionKey(value);
+function hasCronGeneratedSessionKey(value: unknown): boolean {
+  return typeof value === "string" && isCronSessionKey(value);
 }
 
 function isCronRunGeneratedRecord(record: unknown): boolean {
@@ -172,7 +173,7 @@ function isCronRunGeneratedRecord(record: unknown): boolean {
     sessionKey?: unknown;
     data?: unknown;
   };
-  if (hasCronRunSessionKey(candidate.sessionKey)) {
+  if (hasCronGeneratedSessionKey(candidate.sessionKey)) {
     return true;
   }
   if (!candidate.data || typeof candidate.data !== "object" || Array.isArray(candidate.data)) {
@@ -181,7 +182,7 @@ function isCronRunGeneratedRecord(record: unknown): boolean {
   const nested = candidate.data as {
     sessionKey?: unknown;
   };
-  return hasCronRunSessionKey(nested.sessionKey);
+  return hasCronGeneratedSessionKey(nested.sessionKey);
 }
 
 function normalizeComparablePath(pathname: string): string {
@@ -232,7 +233,7 @@ export function loadSessionTranscriptClassificationForSessionsDir(
     if (isDreamingNarrativeSessionStoreKey(sessionKey)) {
       dreamingTranscriptPaths.add(transcriptPath);
     }
-    if (isCronRunSessionKey(sessionKey)) {
+    if (isCronSessionKey(sessionKey)) {
       cronRunTranscriptPaths.add(transcriptPath);
     }
   }

@@ -5,6 +5,7 @@ export {
   hasInterSessionUserProvenance,
   isCompactionCheckpointTranscriptFileName,
   isCronRunSessionKey,
+  isCronSessionKey,
   isExecCompletionEvent,
   isHeartbeatUserMessage,
   isSessionArchiveArtifactName,

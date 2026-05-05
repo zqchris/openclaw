@@ -2,6 +2,12 @@
 
 Docs: https://docs.openclaw.ai
 
+## Unreleased
+
+### Fixes
+
+- Memory/dreaming: keep stable cron session transcripts (`agent:<id>:cron:<jobId>`) and their rotated reset/deleted artifacts out of the Dream session corpus, and add `dreaming.excludeAgents` for agent workspaces that should keep normal memory/transcripts without joining scheduled Dream sweeps.
+
 ## 2026.5.4
 
 ### Highlights
@@ -297,6 +303,7 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Plugins/security: stop the install scanner from blocking official bundled plugin packages when `process.env` access and normal API sends only appear in distant parts of the same compiled bundle. Thanks @vincentkoc.
+
 
 ## 2026.5.3
 
