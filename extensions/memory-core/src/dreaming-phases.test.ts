@@ -941,6 +941,14 @@ describe("memory-core dreaming phases", () => {
             content: [{ type: "text", text: "Main workspace should stay in main dreams." }],
           },
         }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:01:30.000Z",
+            content: [{ type: "text", text: "Main dreams kept the main workspace." }],
+          },
+        }),
       ].join("\n") + "\n",
       "utf-8",
     );
@@ -953,6 +961,14 @@ describe("memory-core dreaming phases", () => {
             role: "user",
             timestamp: "2026-04-05T18:02:00.000Z",
             content: [{ type: "text", text: "CEO workspace should stay in CEO dreams." }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:02:30.000Z",
+            content: [{ type: "text", text: "CEO dreams kept the CEO workspace." }],
           },
         }),
       ].join("\n") + "\n",
@@ -1027,6 +1043,19 @@ describe("memory-core dreaming phases", () => {
             role: "user",
             timestamp: "2026-04-05T18:01:00.000Z",
             content: [{ type: "text", text: "OPENAI_API_KEY=sk-1234567890abcdef" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:01:30.000Z",
+            content: [
+              {
+                type: "text",
+                text: "Recorded OPENAI_API_KEY=sk-1234567890abcdef for rotation.",
+              },
+            ],
           },
         }),
       ].join("\n") + "\n",
@@ -1302,7 +1331,7 @@ describe("memory-core dreaming phases", () => {
     expect(ingestionEntry.contentHash).toBe(EMPTY_SESSION_CONTENT_HASH);
   });
 
-  it("skips isolated cron run transcripts during session ingestion", async () => {
+  it("skips isolated cron transcripts that use the stable cron session key", async () => {
     const workspaceDir = await createDreamingWorkspace();
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
@@ -1335,7 +1364,7 @@ describe("memory-core dreaming phases", () => {
     await fs.writeFile(
       path.join(sessionsDir, "sessions.json"),
       JSON.stringify({
-        "agent:main:cron:job-1:run:run-1": {
+        "agent:main:cron:job-1": {
           sessionId: "cron-run",
           sessionFile: transcriptPath,
           updatedAt: Date.now(),
@@ -1408,7 +1437,111 @@ describe("memory-core dreaming phases", () => {
     expect(ingestionEntry.contentHash).toBe(EMPTY_SESSION_CONTENT_HASH);
   });
 
-  it("drops generated system wrapper text without suppressing paired assistant replies", async () => {
+  it("skips rotated cron transcripts when the stable cron session key maps to the live file", async () => {
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const liveTranscriptPath = path.join(sessionsDir, "cron-run.jsonl");
+    const rotatedTranscriptPath = path.join(
+      sessionsDir,
+      "cron-run.jsonl.deleted.2026-04-05T18-03-00.000Z",
+    );
+    await fs.writeFile(
+      rotatedTranscriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:02:00.000Z",
+            content: "Status: Lv2 prosperity 4967. Cron result should stay out.",
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-1": {
+          sessionId: "cron-run",
+          sessionFile: liveTranscriptPath,
+          updatedAt: Date.now(),
+        },
+      }),
+      "utf-8",
+    );
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: {
+            workspace: workspaceDir,
+          },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: {
+                    light: {
+                      enabled: true,
+                      limit: 20,
+                      lookbackDays: 7,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    try {
+      await beforeAgentReply(
+        { cleanedBody: "__openclaw_memory_core_light_sleep__" },
+        { trigger: "heartbeat", workspaceDir },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-corpus", "2026-04-05.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const sessionIngestion = JSON.parse(
+      await fs.readFile(
+        path.join(workspaceDir, "memory", ".dreams", "session-ingestion.json"),
+        "utf-8",
+      ),
+    ) as {
+      files: Record<
+        string,
+        {
+          lineCount: number;
+          lastContentLine: number;
+          contentHash: string;
+        }
+      >;
+    };
+    expect(Object.values(sessionIngestion.files)).toEqual([
+      expect.objectContaining({
+        lineCount: 0,
+        lastContentLine: 0,
+        contentHash: expect.any(String),
+      }),
+    ]);
+  });
+
+  it("drops generated system wrapper turns without suppressing later human-driven replies", async () => {
     const workspaceDir = await createDreamingWorkspace();
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
@@ -1504,7 +1637,7 @@ describe("memory-core dreaming phases", () => {
     expect(corpus).toContain("User: What changed in the sync?");
     expect(corpus).toContain("Assistant: One new session was converted.");
     expect(corpus).not.toContain("System (untrusted):");
-    expect(corpus).toContain("Assistant: Handled internally.");
+    expect(corpus).not.toContain("Assistant: Handled internally.");
   });
 
   it("drops archive, cron, and heartbeat chatter from fresh session corpus output", async () => {
@@ -2078,6 +2211,14 @@ describe("memory-core dreaming phases", () => {
           message: {
             role: "user",
             timestamp: "2026-04-05T18:01:00.000Z",
+            content: [{ type: "text", text: "Should we move backups?" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:01:30.000Z",
             content: [{ type: "text", text: "Move backups to S3 Glacier." }],
           },
         }),
@@ -2127,6 +2268,14 @@ describe("memory-core dreaming phases", () => {
           JSON.stringify({
             type: "message",
             message: {
+              role: "user",
+              timestamp: "2026-04-06T01:01:00.000Z",
+              content: [{ type: "text", text: "What is the backup retention policy?" }],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            message: {
               role: "assistant",
               timestamp: "2026-04-06T01:02:00.000Z",
               content: [{ type: "text", text: "Retention policy stays at 365 days." }],
@@ -2172,6 +2321,14 @@ describe("memory-core dreaming phases", () => {
           message: {
             role: "user",
             timestamp: "2026-04-05T18:01:00.000Z",
+            content: [{ type: "text", text: "What is the Glacier archive status?" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            timestamp: "2026-04-05T18:01:30.000Z",
             content: [{ type: "text", text: "Glacier archive migration is now complete." }],
           },
         }),

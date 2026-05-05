@@ -148,6 +148,56 @@ describe("memory dreaming host helpers", () => {
     expect(resolved.phases.rem.cron).toBe("15 */8 * * *");
   });
 
+  it("normalizes excluded agents and leaves them out of dreaming workspaces", () => {
+    const cfg = {
+      agents: {
+        list: [
+          { id: "main", workspace: "/workspace/main" },
+          { id: "social", workspace: "/workspace/shared" },
+          { id: "email", workspace: "/workspace/shared" },
+          { id: "filomail", workspace: "/workspace/filomail" },
+        ],
+      },
+      plugins: {
+        entries: {
+          "memory-core": {
+            config: {
+              dreaming: {
+                excludeAgents: [" EMAIL ", "email", "", "filomail"],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(
+      resolveMemoryDreamingConfig({ pluginConfig: { dreaming: { excludeAgents: [] } } }),
+    ).toMatchObject({
+      excludeAgents: [],
+    });
+    expect(
+      resolveMemoryDreamingConfig({ pluginConfig: resolveMemoryDreamingPluginConfig(cfg) }),
+    ).toMatchObject({
+      excludeAgents: ["email", "filomail"],
+    });
+    expect(
+      resolveMemoryDreamingWorkspaces(cfg, {
+        primaryWorkspaceDir: "/workspace/email",
+        primaryAgentId: "email",
+      }),
+    ).toEqual([
+      {
+        workspaceDir: "/workspace/main",
+        agentIds: ["main"],
+      },
+      {
+        workspaceDir: "/workspace/shared",
+        agentIds: ["social"],
+      },
+    ]);
+  });
+
   it("dedupes shared workspaces across all configured agents", () => {
     const cfg = {
       agents: {

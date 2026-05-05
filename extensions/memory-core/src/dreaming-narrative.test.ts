@@ -678,6 +678,69 @@ describe("generateAndAppendDreamNarrative", () => {
     expect(logger.info).toHaveBeenCalled();
   });
 
+  it("stamps accepted narrative transcripts with a source marker", async () => {
+    const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
+    const stateDir = await createTempWorkspace("openclaw-dreaming-state-");
+    const sessionsDir = path.join(stateDir, "agents", "main", "sessions");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const storePath = path.join(sessionsDir, "sessions.json");
+    const transcriptPath = path.join(sessionsDir, "dreaming-run.jsonl");
+    const subagent = createMockSubagent("The repository whispered of forgotten endpoints.");
+    const logger = createMockLogger();
+    const nowMs = Date.parse("2026-04-05T03:00:00Z");
+    const workspaceHash = createHash("sha1").update(workspaceDir).digest("hex").slice(0, 12);
+    const expectedSessionKey = `dreaming-narrative-light-${workspaceHash}-${nowMs}`;
+    await fs.writeFile(
+      storePath,
+      `${JSON.stringify({
+        [`agent:main:${expectedSessionKey}`]: {
+          sessionId: "dreaming-run",
+          sessionFile: transcriptPath,
+        },
+      })}\n`,
+      "utf-8",
+    );
+    await fs.writeFile(
+      transcriptPath,
+      `${JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: "Write a dream diary entry from these memory fragments.",
+        },
+      })}\n`,
+      "utf-8",
+    );
+    vi.spyOn(runtimeConfigSnapshotModule, "getRuntimeConfig").mockReturnValue({
+      session: {},
+    } as never);
+    vi.spyOn(sessionStoreRuntimeModule, "resolveStorePath").mockImplementation(((
+      _store: string | undefined,
+      { agentId }: { agentId: string },
+    ) => {
+      expect(agentId).toBe("main");
+      return storePath;
+    }) as typeof sessionStoreRuntimeModule.resolveStorePath);
+    vi.spyOn(memoryCoreHostRuntimeCoreModule, "resolveStateDir").mockReturnValue(stateDir);
+
+    await generateAndAppendDreamNarrative({
+      subagent,
+      workspaceDir,
+      data: {
+        phase: "light",
+        snippets: ["API endpoints need authentication"],
+      },
+      nowMs,
+      timezone: "UTC",
+      logger,
+    });
+
+    const transcript = await fs.readFile(transcriptPath, "utf-8");
+    expect(transcript).toContain('"customType":"openclaw:bootstrap-context:full"');
+    expect(transcript).toContain(`"runId":"${expectedSessionKey}"`);
+    expect(transcript).toContain('"source":"memory-core:dreaming-narrative"');
+  });
+
   it("retries with the session default when the configured model cannot start", async () => {
     const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
     const subagent = createMockSubagent("The default model carried the diary home.");
