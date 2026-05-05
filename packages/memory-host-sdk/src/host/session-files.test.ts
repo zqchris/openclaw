@@ -228,6 +228,268 @@ describe("buildSessionEntry", () => {
     expect(entry.generatedByCronRun).toBe(true);
   });
 
+  it("keeps live cron transcripts opaque when sessions.json uses the stable cron session key", async () => {
+    const sessionsDir = path.join(tmpDir, "agents", "main", "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "cron-run.jsonl");
+    fsSync.writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: "Status: Lv2 prosperity 4967. Cron result should stay out.",
+          },
+        }),
+      ].join("\n"),
+    );
+    fsSync.writeFileSync(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-1": {
+          sessionId: "cron-run",
+          sessionFile: transcriptPath,
+        },
+      }),
+    );
+
+    const entry = await buildSessionEntry(transcriptPath);
+
+    expect(entry).not.toBeNull();
+    expect(entry?.content).toBe("");
+    expect(entry?.lineMap).toEqual([]);
+    expect(entry?.generatedByCronRun).toBe(true);
+  });
+
+  it("exports only completed human-driven turns when requested", async () => {
+    const jsonlLines = [
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: "Assistant-only greeting." },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "What is the Delta mileage value?" },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: "" },
+      }),
+      JSON.stringify({
+        type: "toolResult",
+        message: { role: "toolResult", content: "tool output" },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5.5",
+          content: "A Delta mile is usually worth about one cent.",
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "Should this stale user prompt be paired?" },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          provenance: { kind: "inter_session", sourceTool: "subagent_announce" },
+          content: "A background task completed. Internal relay text.",
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5.5",
+          content: "Relay answer should stay out.",
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "openclaw",
+          model: "delivery-mirror",
+          content: "MoviePilot notification should stay out.",
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "[OpenClaw heartbeat poll]" },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "litellm",
+          model: "claude-haiku-4-5-20251001",
+          content: "I'll read HEARTBEAT.md and check for pending tasks.",
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "[cron:job-1] run the nightly report" },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: "NO_REPLY" },
+      }),
+    ];
+    const filePath = path.join(tmpDir, "human-turns.jsonl");
+    fsSync.writeFileSync(filePath, jsonlLines.join("\n"));
+
+    const entry = await buildSessionEntry(filePath, { humanDrivenTurnsOnly: true });
+
+    expect(entry).not.toBeNull();
+    expect(entry?.content).toBe(
+      [
+        "User: What is the Delta mileage value?",
+        "Assistant: A Delta mile is usually worth about one cent.",
+      ].join("\n"),
+    );
+    expect(entry?.lineMap).toEqual([2, 5]);
+  });
+
+  it("keeps hook transcripts out of human-driven session exports via session source", async () => {
+    const sessionsDir = path.join(tmpDir, "agents", "email", "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "gmail-hook.jsonl");
+    fsSync.writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: "Task: Hook | Job ID: 1 | SECURITY NOTICE: email payload",
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            provider: "openai-codex",
+            model: "gpt-5.5",
+            content: "NO_REPLY",
+          },
+        }),
+      ].join("\n"),
+    );
+    fsSync.writeFileSync(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:email:hook:gmail:abc": {
+          sessionId: "gmail-hook",
+          sessionFile: transcriptPath,
+        },
+      }),
+    );
+
+    const entry = await buildSessionEntry(transcriptPath, {
+      humanDrivenTurnsOnly: true,
+      skipInternalAutomationSources: true,
+    });
+
+    expect(entry).not.toBeNull();
+    expect(entry?.content).toBe("");
+    expect(entry?.lineMap).toEqual([]);
+    expect(entry?.generatedByInternalAutomation).toBe(true);
+  });
+
+  it("keeps filomail Feishu human turns without agent-specific allowlists", async () => {
+    const sessionsDir = path.join(tmpDir, "agents", "filomail", "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "feishu-human.jsonl");
+    fsSync.writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: "张乾: 帮我检查 FiloMail 的推送快捷操作任务。",
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            provider: "openai-codex",
+            model: "gpt-5.5",
+            content: "已检查，任务需要补 Reply、Archive 和 Delete。",
+          },
+        }),
+      ].join("\n"),
+    );
+    fsSync.writeFileSync(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:filomail:feishu:group:oc_demo": {
+          sessionId: "feishu-human",
+          sessionFile: transcriptPath,
+        },
+      }),
+    );
+
+    const entry = await buildSessionEntry(transcriptPath, {
+      humanDrivenTurnsOnly: true,
+      skipInternalAutomationSources: true,
+    });
+
+    expect(entry).not.toBeNull();
+    expect(entry?.content).toContain("User: 张乾: 帮我检查 FiloMail 的推送快捷操作任务。");
+    expect(entry?.content).toContain("Assistant: 已检查，任务需要补 Reply、Archive 和 Delete。");
+  });
+
+  it("drops dreaming narrative transcripts even when the marker lands after messages", async () => {
+    const filePath = path.join(tmpDir, "dreaming-narrative-late-marker.jsonl");
+    fsSync.writeFileSync(
+      filePath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: "Write a dream diary entry from these memory fragments.",
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            provider: "openai-codex",
+            model: "gpt-5.5",
+            content: "The archive became moonlight.",
+          },
+        }),
+        JSON.stringify({
+          type: "custom",
+          customType: "openclaw:bootstrap-context:full",
+          data: {
+            runId: "dreaming-narrative-light-1775894400455",
+            source: "memory-core:dreaming-narrative",
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const entry = await buildSessionEntry(filePath, {
+      humanDrivenTurnsOnly: true,
+      skipInternalAutomationSources: true,
+    });
+
+    expect(entry).not.toBeNull();
+    expect(entry?.content).toBe("");
+    expect(entry?.lineMap).toEqual([]);
+    expect(entry?.generatedByDreamingNarrative).toBe(true);
+  });
+
   it("skips blank lines and invalid JSON without breaking lineMap", async () => {
     const jsonlLines = [
       "",

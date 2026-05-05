@@ -584,11 +584,12 @@ For conceptual behavior and slash commands, see [Dreaming](/concepts/dreaming).
 
 ### User settings
 
-| Key         | Type      | Default       | Description                                       |
-| ----------- | --------- | ------------- | ------------------------------------------------- |
-| `enabled`   | `boolean` | `false`       | Enable or disable dreaming entirely               |
-| `frequency` | `string`  | `0 3 * * *`   | Optional cron cadence for the full dreaming sweep |
-| `model`     | `string`  | default model | Optional Dream Diary subagent model override      |
+| Key             | Type       | Default       | Description                                                             |
+| --------------- | ---------- | ------------- | ----------------------------------------------------------------------- |
+| `enabled`       | `boolean`  | `false`       | Enable or disable dreaming entirely                                     |
+| `frequency`     | `string`   | `0 3 * * *`   | Optional cron cadence for the full dreaming sweep                       |
+| `model`         | `string`   | default model | Optional Dream Diary subagent model override                            |
+| `excludeAgents` | `string[]` | `[]`          | Optional agent ids to leave out of scheduled dreaming workspace fan-out |
 
 ### Example
 
@@ -606,6 +607,7 @@ For conceptual behavior and slash commands, see [Dreaming](/concepts/dreaming).
             enabled: true,
             frequency: "0 3 * * *",
             model: "anthropic/claude-sonnet-4-6",
+            excludeAgents: ["email"],
           },
         },
       },

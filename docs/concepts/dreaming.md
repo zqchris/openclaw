@@ -113,12 +113,15 @@ When enabled, `memory-core` auto-manages one cron job for a full dreaming sweep.
 
 The sweep includes the primary runtime workspace and any configured agent workspaces, deduped by path, so subagent workspace fan-out does not exclude the main agent's `DREAMS.md` and memory state.
 
+Set `dreaming.excludeAgents` when a configured agent should keep normal memory/transcripts but stay out of scheduled Dreaming.
+
 Default cadence behavior:
 
-| Setting              | Default       |
-| -------------------- | ------------- |
-| `dreaming.frequency` | `0 3 * * *`   |
-| `dreaming.model`     | default model |
+| Setting                  | Default       |
+| ------------------------ | ------------- |
+| `dreaming.frequency`     | `0 3 * * *`   |
+| `dreaming.model`         | default model |
+| `dreaming.excludeAgents` | `[]`          |
 
 ## Quick start
 
@@ -150,7 +153,8 @@ Default cadence behavior:
               "dreaming": {
                 "enabled": true,
                 "timezone": "America/Los_Angeles",
-                "frequency": "0 */6 * * *"
+                "frequency": "0 */6 * * *",
+                "excludeAgents": ["email"]
               }
             }
           }
@@ -216,6 +220,9 @@ All settings live under `plugins.entries.memory-core.config.dreaming`.
 </ParamField>
 <ParamField path="model" type="string">
   Optional Dream Diary subagent model override. Use a canonical `provider/model` value when also setting a subagent `allowedModels` allowlist.
+</ParamField>
+<ParamField path="excludeAgents" type="string[]" default="[]">
+  Agent ids to leave out of scheduled dreaming sweeps. This keeps ordinary memory and transcripts intact for those agents.
 </ParamField>
 
 <Warning>

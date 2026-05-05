@@ -1,10 +1,13 @@
 export {
   HEARTBEAT_PROMPT,
+  HEARTBEAT_TRANSCRIPT_PROMPT,
   HEARTBEAT_TOKEN,
   SILENT_REPLY_TOKEN,
   hasInterSessionUserProvenance,
   isCompactionCheckpointTranscriptFileName,
   isCronRunSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
   isExecCompletionEvent,
   isHeartbeatUserMessage,
   isSessionArchiveArtifactName,

@@ -6,13 +6,15 @@ import { hashText } from "./hash.js";
 import { createSubsystemLogger, redactSensitiveText } from "./openclaw-runtime-io.js";
 import {
   HEARTBEAT_PROMPT,
+  HEARTBEAT_TRANSCRIPT_PROMPT,
   HEARTBEAT_TOKEN,
   hasInterSessionUserProvenance,
   isCompactionCheckpointTranscriptFileName,
-  isCronRunSessionKey,
+  isCronSessionKey,
   isExecCompletionEvent,
   isHeartbeatUserMessage,
   isSessionArchiveArtifactName,
+  isSubagentSessionKey,
   isSilentReplyPayloadText,
   isUsageCountedSessionTranscriptFileName,
   parseUsageCountedSessionIdFromFileName,
@@ -45,6 +47,8 @@ export type SessionFileEntry = {
   generatedByDreamingNarrative?: boolean;
   /** True when this transcript belongs to an isolated cron run session. */
   generatedByCronRun?: boolean;
+  /** True when this transcript belongs to an internal non-human automation source. */
+  generatedByInternalAutomation?: boolean;
 };
 
 export type BuildSessionEntryOptions = {
@@ -52,6 +56,12 @@ export type BuildSessionEntryOptions = {
   generatedByDreamingNarrative?: boolean;
   /** Optional preclassification from a caller-managed cron transcript lookup. */
   generatedByCronRun?: boolean;
+  /** Optional preclassification from a caller-managed internal automation lookup. */
+  generatedByInternalAutomation?: boolean;
+  /** Only export completed human-user -> real-assistant turns. */
+  humanDrivenTurnsOnly?: boolean;
+  /** Suppress transcripts whose session source is internal automation. */
+  skipInternalAutomationSources?: boolean;
   /** Override for tests or specialized callers that need a tighter parse yield cadence. */
   parseYieldEveryLines?: number;
 };
@@ -59,6 +69,7 @@ export type BuildSessionEntryOptions = {
 export type SessionTranscriptClassification = {
   dreamingNarrativeTranscriptPaths: ReadonlySet<string>;
   cronRunTranscriptPaths: ReadonlySet<string>;
+  internalAutomationTranscriptPaths: ReadonlySet<string>;
 };
 
 type SessionTranscriptStoreEntry = {
@@ -164,8 +175,29 @@ function isDreamingNarrativeSessionStoreKey(sessionKey: string): boolean {
   return sessionSegment.startsWith(DREAMING_NARRATIVE_RUN_PREFIX);
 }
 
-function hasCronRunSessionKey(value: unknown): boolean {
-  return typeof value === "string" && isCronRunSessionKey(value);
+function hasCronGeneratedSessionKey(value: unknown): boolean {
+  return typeof value === "string" && isCronSessionKey(value);
+}
+
+function hasInternalAutomationSessionKey(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (
+    isCronSessionKey(trimmed) ||
+    isSubagentSessionKey(trimmed) ||
+    isDreamingNarrativeSessionStoreKey(trimmed)
+  ) {
+    return true;
+  }
+  const firstSeparator = trimmed.indexOf(":");
+  const secondSeparator = firstSeparator < 0 ? -1 : trimmed.indexOf(":", firstSeparator + 1);
+  const sessionSegment = secondSeparator < 0 ? trimmed : trimmed.slice(secondSeparator + 1);
+  return sessionSegment.toLowerCase().startsWith("hook:");
 }
 
 function isCronRunGeneratedRecord(record: unknown): boolean {
@@ -176,7 +208,7 @@ function isCronRunGeneratedRecord(record: unknown): boolean {
     sessionKey?: unknown;
     data?: unknown;
   };
-  if (hasCronRunSessionKey(candidate.sessionKey)) {
+  if (hasCronGeneratedSessionKey(candidate.sessionKey)) {
     return true;
   }
   if (!candidate.data || typeof candidate.data !== "object" || Array.isArray(candidate.data)) {
@@ -185,7 +217,31 @@ function isCronRunGeneratedRecord(record: unknown): boolean {
   const nested = candidate.data as {
     sessionKey?: unknown;
   };
-  return hasCronRunSessionKey(nested.sessionKey);
+  return hasCronGeneratedSessionKey(nested.sessionKey);
+}
+
+function isInternalAutomationGeneratedRecord(record: unknown): boolean {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return false;
+  }
+  const candidate = record as {
+    sessionKey?: unknown;
+    data?: unknown;
+  };
+  if (hasInternalAutomationSessionKey(candidate.sessionKey)) {
+    return true;
+  }
+  if (!candidate.data || typeof candidate.data !== "object" || Array.isArray(candidate.data)) {
+    return false;
+  }
+  const nested = candidate.data as {
+    sessionKey?: unknown;
+    runId?: unknown;
+  };
+  return (
+    hasInternalAutomationSessionKey(nested.sessionKey) ||
+    hasInternalAutomationSessionKey(nested.runId)
+  );
 }
 
 function normalizeComparablePath(pathname: string): string {
@@ -228,6 +284,7 @@ export function loadSessionTranscriptClassificationForSessionsDir(
   const store = readSessionTranscriptClassificationStore(storePath);
   const dreamingTranscriptPaths = new Set<string>();
   const cronRunTranscriptPaths = new Set<string>();
+  const internalAutomationTranscriptPaths = new Set<string>();
   for (const [sessionKey, entry] of Object.entries(store)) {
     const transcriptPath = resolveSessionStoreTranscriptPath(sessionsDir, entry);
     if (!transcriptPath) {
@@ -236,13 +293,17 @@ export function loadSessionTranscriptClassificationForSessionsDir(
     if (isDreamingNarrativeSessionStoreKey(sessionKey)) {
       dreamingTranscriptPaths.add(transcriptPath);
     }
-    if (isCronRunSessionKey(sessionKey)) {
+    if (isCronSessionKey(sessionKey)) {
       cronRunTranscriptPaths.add(transcriptPath);
+    }
+    if (hasInternalAutomationSessionKey(sessionKey)) {
+      internalAutomationTranscriptPaths.add(transcriptPath);
     }
   }
   return {
     dreamingNarrativeTranscriptPaths: dreamingTranscriptPaths,
     cronRunTranscriptPaths,
+    internalAutomationTranscriptPaths,
   };
 }
 
@@ -277,6 +338,7 @@ export function loadSessionTranscriptClassificationForAgent(
 function classifySessionTranscriptFromSessionStore(absPath: string): {
   generatedByDreamingNarrative: boolean;
   generatedByCronRun: boolean;
+  generatedByInternalAutomation: boolean;
 } {
   const sessionsDir = path.dirname(absPath);
   const normalizedAbsPath = normalizeComparablePath(absPath);
@@ -294,6 +356,9 @@ function classifySessionTranscriptFromSessionStore(absPath: string): {
       classification.dreamingNarrativeTranscriptPaths,
     ),
     generatedByCronRun: hasClassifiedPath(classification.cronRunTranscriptPaths),
+    generatedByInternalAutomation: hasClassifiedPath(
+      classification.internalAutomationTranscriptPaths,
+    ),
   };
 }
 
@@ -454,7 +519,42 @@ function isGeneratedCronPromptMessage(text: string, role: "user" | "assistant"):
 }
 
 function isGeneratedHeartbeatPromptMessage(text: string, role: "user" | "assistant"): boolean {
-  return role === "user" && isHeartbeatUserMessage({ role, content: text }, HEARTBEAT_PROMPT);
+  return (
+    role === "user" &&
+    (text === HEARTBEAT_TRANSCRIPT_PROMPT ||
+      isHeartbeatUserMessage({ role, content: text }, HEARTBEAT_PROMPT))
+  );
+}
+
+function isTranscriptOnlyOpenClawAssistantMessage(message: {
+  role?: unknown;
+  provider?: unknown;
+  model?: unknown;
+}): boolean {
+  return (
+    message.role === "assistant" &&
+    message.provider === "openclaw" &&
+    (message.model === "delivery-mirror" || message.model === "gateway-injected")
+  );
+}
+
+function isHumanDrivenUserMessage(
+  message: { role?: unknown; provenance?: unknown },
+  text: string,
+): boolean {
+  return message.role === "user" && text.length > 0 && !hasInterSessionUserProvenance(message);
+}
+
+function isHumanDrivenAssistantMessage(
+  message: { role?: unknown; provider?: unknown; model?: unknown },
+  text: string,
+): boolean {
+  return (
+    message.role === "assistant" &&
+    text.length > 0 &&
+    text !== "NO_REPLY" &&
+    !isTranscriptOnlyOpenClawAssistantMessage(message)
+  );
 }
 
 function sanitizeSessionText(text: string, role: "user" | "assistant"): string | null {
@@ -570,7 +670,9 @@ export async function buildSessionEntry(
     const messageTimestampsMs: number[] = [];
     const parseYieldEveryLines = resolveSessionEntryParseYieldLines(opts);
     const sessionStoreClassification =
-      opts.generatedByDreamingNarrative === undefined || opts.generatedByCronRun === undefined
+      opts.generatedByDreamingNarrative === undefined ||
+      opts.generatedByCronRun === undefined ||
+      opts.generatedByInternalAutomation === undefined
         ? classifySessionTranscriptFromSessionStore(absPath)
         : null;
     let generatedByDreamingNarrative =
@@ -579,8 +681,23 @@ export async function buildSessionEntry(
       false;
     let generatedByCronRun =
       opts.generatedByCronRun ?? sessionStoreClassification?.generatedByCronRun ?? false;
+    let generatedByInternalAutomation =
+      opts.generatedByInternalAutomation ??
+      sessionStoreClassification?.generatedByInternalAutomation ??
+      false;
     const allowArchiveContentCronClassification =
       isUsageCountedSessionArchiveTranscriptPath(absPath);
+    let pendingHumanUser: {
+      renderedLines: string[];
+      lineMap: number[];
+      messageTimestampsMs: number[];
+    } | null = null;
+    const clearCollected = () => {
+      collected.length = 0;
+      lineMap.length = 0;
+      messageTimestampsMs.length = 0;
+      pendingHumanUser = null;
+    };
     for (let jsonlIdx = 0, lineStart = 0; lineStart <= raw.length; jsonlIdx++) {
       await yieldSessionEntryParseIfNeeded(jsonlIdx, parseYieldEveryLines);
       const newlineIndex = raw.indexOf("\n", lineStart);
@@ -598,6 +715,7 @@ export async function buildSessionEntry(
       }
       if (!generatedByDreamingNarrative && isDreamingNarrativeGeneratedRecord(record)) {
         generatedByDreamingNarrative = true;
+        clearCollected();
       }
       if (
         !generatedByCronRun &&
@@ -605,9 +723,15 @@ export async function buildSessionEntry(
         isCronRunGeneratedRecord(record)
       ) {
         generatedByCronRun = true;
-        collected.length = 0;
-        lineMap.length = 0;
-        messageTimestampsMs.length = 0;
+        clearCollected();
+      }
+      if (
+        !generatedByInternalAutomation &&
+        opts.skipInternalAutomationSources === true &&
+        isInternalAutomationGeneratedRecord(record)
+      ) {
+        generatedByInternalAutomation = true;
+        clearCollected();
       }
       if (
         !record ||
@@ -617,7 +741,13 @@ export async function buildSessionEntry(
         continue;
       }
       const message = (record as { message?: unknown }).message as
-        | { role?: unknown; content?: unknown; provenance?: unknown }
+        | {
+            role?: unknown;
+            content?: unknown;
+            provenance?: unknown;
+            provider?: unknown;
+            model?: unknown;
+          }
         | undefined;
       if (!message || typeof message.role !== "string") {
         continue;
@@ -625,7 +755,18 @@ export async function buildSessionEntry(
       if (message.role !== "user" && message.role !== "assistant") {
         continue;
       }
-      if (message.role === "user" && hasInterSessionUserProvenance(message)) {
+      if (
+        !opts.humanDrivenTurnsOnly &&
+        message.role === "user" &&
+        hasInterSessionUserProvenance(message)
+      ) {
+        continue;
+      }
+      if (
+        opts.humanDrivenTurnsOnly &&
+        message.role === "assistant" &&
+        isTranscriptOnlyOpenClawAssistantMessage(message)
+      ) {
         continue;
       }
       const rawText = collectRawSessionText(message.content);
@@ -638,12 +779,13 @@ export async function buildSessionEntry(
         isGeneratedCronPromptMessage(normalizeSessionText(rawText), message.role)
       ) {
         generatedByCronRun = true;
-        collected.length = 0;
-        lineMap.length = 0;
-        messageTimestampsMs.length = 0;
+        clearCollected();
       }
       const text = sanitizeSessionText(rawText, message.role);
       if (!text) {
+        if (opts.humanDrivenTurnsOnly && message.role === "user") {
+          pendingHumanUser = null;
+        }
         // Assistant-side machinery (silent replies, system wrappers) is already
         // dropped by sanitizeSessionText. We deliberately do NOT use the prior
         // user message's pattern-match to drop the next assistant message:
@@ -653,7 +795,10 @@ export async function buildSessionEntry(
         // prefixing their own prompt. See PR #70737 review (aisle-research-bot).
         continue;
       }
-      if (generatedByDreamingNarrative || generatedByCronRun) {
+      const generatedBySkippedAutomation =
+        generatedByInternalAutomation && opts.skipInternalAutomationSources === true;
+      if (generatedByDreamingNarrative || generatedByCronRun || generatedBySkippedAutomation) {
+        pendingHumanUser = null;
         continue;
       }
       const safe = redactSensitiveText(text, { mode: "tools" });
@@ -663,6 +808,28 @@ export async function buildSessionEntry(
         record as { timestamp?: unknown },
         message as { timestamp?: unknown },
       );
+      if (opts.humanDrivenTurnsOnly) {
+        if (message.role === "user") {
+          pendingHumanUser = isHumanDrivenUserMessage(message, text)
+            ? {
+                renderedLines,
+                lineMap: renderedLines.map(() => jsonlIdx + 1),
+                messageTimestampsMs: renderedLines.map(() => timestampMs),
+              }
+            : null;
+          continue;
+        }
+        if (isHumanDrivenAssistantMessage(message, text) && pendingHumanUser) {
+          collected.push(...pendingHumanUser.renderedLines, ...renderedLines);
+          lineMap.push(...pendingHumanUser.lineMap, ...renderedLines.map(() => jsonlIdx + 1));
+          messageTimestampsMs.push(
+            ...pendingHumanUser.messageTimestampsMs,
+            ...renderedLines.map(() => timestampMs),
+          );
+          pendingHumanUser = null;
+        }
+        continue;
+      }
       collected.push(...renderedLines);
       lineMap.push(...renderedLines.map(() => jsonlIdx + 1));
       messageTimestampsMs.push(...renderedLines.map(() => timestampMs));
@@ -679,6 +846,7 @@ export async function buildSessionEntry(
       messageTimestampsMs,
       ...(generatedByDreamingNarrative ? { generatedByDreamingNarrative: true } : {}),
       ...(generatedByCronRun ? { generatedByCronRun: true } : {}),
+      ...(generatedByInternalAutomation ? { generatedByInternalAutomation: true } : {}),
     };
   } catch (err) {
     void logSessionFileReadFailure(absPath, err);

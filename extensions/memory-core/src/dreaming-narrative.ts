@@ -99,6 +99,7 @@ const NARRATIVE_SYSTEM_PROMPT = [
 const NARRATIVE_TIMEOUT_MS = 60_000;
 const DREAMING_SESSION_KEY_PREFIX = "dreaming-narrative-";
 const DREAMING_TRANSCRIPT_RUN_MARKER = '"runId":"dreaming-narrative-';
+const DREAMING_TRANSCRIPT_MARKER_CUSTOM_TYPE = "openclaw:bootstrap-context:full";
 const DREAMING_ORPHAN_MIN_AGE_MS = 300_000;
 const SAFE_SESSION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const DREAMS_FILENAMES = ["DREAMS.md", "dreams.md"] as const;
@@ -240,6 +241,82 @@ async function startNarrativeRunOrFallback(params: {
     }
     return null;
   }
+}
+
+function isNarrativeSessionStoreKeyMatch(
+  sessionStoreKey: string,
+  narrativeSessionKey: string,
+): boolean {
+  const normalizedKey = sessionStoreKey.trim().toLowerCase();
+  const normalizedSessionKey = narrativeSessionKey.trim().toLowerCase();
+  return (
+    normalizedKey === normalizedSessionKey || normalizedKey.endsWith(`:${normalizedSessionKey}`)
+  );
+}
+
+async function appendDreamingNarrativeTranscriptMarker(params: {
+  sessionKey: string;
+  nowMs: number;
+}): Promise<boolean> {
+  const cfg = getRuntimeConfig();
+  const agentsDir = path.join(resolveStateDir(), "agents");
+  let agentEntries: Dirent[] = [];
+  try {
+    agentEntries = await fs.readdir(agentsDir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  const marker = `${JSON.stringify({
+    type: "custom",
+    customType: DREAMING_TRANSCRIPT_MARKER_CUSTOM_TYPE,
+    data: {
+      runId: params.sessionKey,
+      sessionKey: params.sessionKey,
+      source: "memory-core:dreaming-narrative",
+    },
+    timestamp: new Date(params.nowMs).toISOString(),
+  })}\n`;
+
+  for (const agentEntry of agentEntries) {
+    if (!agentEntry.isDirectory()) {
+      continue;
+    }
+    const storePath = resolveStorePath(cfg.session?.store, { agentId: agentEntry.name });
+    const sessionsDir = path.dirname(storePath);
+    let store: Record<string, { sessionFile?: string; sessionId?: string } | undefined>;
+    try {
+      store = loadSessionStore(storePath) as Record<
+        string,
+        { sessionFile?: string; sessionId?: string } | undefined
+      >;
+    } catch {
+      continue;
+    }
+    for (const [key, entry] of Object.entries(store)) {
+      if (!isNarrativeSessionStoreKeyMatch(key, params.sessionKey)) {
+        continue;
+      }
+      const transcriptPath = await normalizeSessionEntryPathForComparison({
+        sessionsDir,
+        entry,
+      });
+      if (!transcriptPath) {
+        continue;
+      }
+      try {
+        const existing = await fs.readFile(transcriptPath, "utf-8");
+        if (existing.includes(`"runId":"${params.sessionKey}"`)) {
+          return true;
+        }
+        await fs.appendFile(transcriptPath, marker, "utf-8");
+        return true;
+      } catch {
+        continue;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -927,6 +1004,14 @@ export async function generateAndAppendDreamNarrative(params: {
         const result = await params.subagent.waitForRun({
           runId,
           timeoutMs: NARRATIVE_TIMEOUT_MS,
+        });
+        await appendDreamingNarrativeTranscriptMarker({
+          sessionKey: attemptSessionKey,
+          nowMs,
+        }).catch((markerErr: unknown) => {
+          params.logger.warn(
+            `memory-core: narrative transcript marker failed for ${params.data.phase} phase: ${formatErrorMessage(markerErr)}`,
+          );
         });
 
         if (result.status === "ok") {

@@ -26,7 +26,10 @@ export {
 
 // Session and reply helpers.
 export { isHeartbeatUserMessage } from "../../../../src/auto-reply/heartbeat-filter.js";
-export { HEARTBEAT_PROMPT } from "../../../../src/auto-reply/heartbeat.js";
+export {
+  HEARTBEAT_PROMPT,
+  HEARTBEAT_TRANSCRIPT_PROMPT,
+} from "../../../../src/auto-reply/heartbeat.js";
 export { stripInboundMetadata } from "../../../../src/auto-reply/reply/strip-inbound-meta.js";
 export {
   HEARTBEAT_TOKEN,
@@ -137,7 +140,11 @@ export type { OpenClawPluginApi } from "../../../../src/plugins/types.js";
 export { defaultRuntime } from "../../../../src/runtime.js";
 export { parseAgentSessionKey } from "../../../../src/routing/session-key.js";
 export { hasInterSessionUserProvenance } from "../../../../src/sessions/input-provenance.js";
-export { isCronRunSessionKey } from "../../../../src/sessions/session-key-utils.js";
+export {
+  isCronRunSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
+} from "../../../../src/sessions/session-key-utils.js";
 export { onSessionTranscriptUpdate } from "../../../../src/sessions/transcript-events.js";
 export { formatDocsLink } from "../../../../src/terminal/links.js";
 export { colorize, isRich, theme } from "../../../../src/terminal/theme.js";

@@ -753,6 +753,7 @@ async function collectSessionIngestionBatches(params: {
     absolutePath: string;
     generatedByDreamingNarrative: boolean;
     generatedByCronRun: boolean;
+    generatedByInternalAutomation: boolean;
     sessionPath: string;
   }> = [];
   for (const agentId of agentIds) {
@@ -763,18 +764,32 @@ async function collectSessionIngestionBatches(params: {
         : {
             dreamingNarrativeTranscriptPaths: new Set<string>(),
             cronRunTranscriptPaths: new Set<string>(),
+            internalAutomationTranscriptPaths: new Set<string>(),
           };
     for (const absolutePath of files) {
       if (isCheckpointSessionTranscriptPath(absolutePath)) {
         continue;
       }
       const normalizedPath = normalizeSessionTranscriptPathForComparison(absolutePath);
+      const primarySessionId = parseUsageCountedSessionIdFromFileName(path.basename(absolutePath));
+      const normalizedPrimaryPath = primarySessionId
+        ? normalizeSessionTranscriptPathForComparison(
+            path.join(path.dirname(absolutePath), `${primarySessionId}.jsonl`),
+          )
+        : undefined;
+      const hasClassifiedPath = (paths: ReadonlySet<string>) =>
+        paths.has(normalizedPath) ||
+        (normalizedPrimaryPath !== undefined && paths.has(normalizedPrimaryPath));
       sessionFiles.push({
         agentId,
         absolutePath,
-        generatedByDreamingNarrative:
-          transcriptClassification.dreamingNarrativeTranscriptPaths.has(normalizedPath),
-        generatedByCronRun: transcriptClassification.cronRunTranscriptPaths.has(normalizedPath),
+        generatedByDreamingNarrative: hasClassifiedPath(
+          transcriptClassification.dreamingNarrativeTranscriptPaths,
+        ),
+        generatedByCronRun: hasClassifiedPath(transcriptClassification.cronRunTranscriptPaths),
+        generatedByInternalAutomation: hasClassifiedPath(
+          transcriptClassification.internalAutomationTranscriptPaths,
+        ),
         sessionPath: sessionPathForFile(absolutePath),
       });
     }
@@ -834,11 +849,18 @@ async function collectSessionIngestionBatches(params: {
     const entry = await buildSessionEntry(file.absolutePath, {
       generatedByDreamingNarrative: file.generatedByDreamingNarrative,
       generatedByCronRun: file.generatedByCronRun,
+      generatedByInternalAutomation: file.generatedByInternalAutomation,
+      humanDrivenTurnsOnly: true,
+      skipInternalAutomationSources: true,
     });
     if (!entry) {
       continue;
     }
-    if (entry.generatedByDreamingNarrative || entry.generatedByCronRun) {
+    if (
+      entry.generatedByDreamingNarrative ||
+      entry.generatedByCronRun ||
+      entry.generatedByInternalAutomation
+    ) {
       nextFiles[stateKey] = {
         mtimeMs: fingerprint.mtimeMs,
         size: fingerprint.size,
