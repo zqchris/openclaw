@@ -228,6 +228,40 @@ describe("buildSessionEntry", () => {
     expect(entry?.generatedByCronRun).toBe(true);
   });
 
+  it("keeps live cron transcripts opaque when sessions.json uses the stable cron session key", async () => {
+    const sessionsDir = path.join(tmpDir, "agents", "main", "sessions");
+    fsSync.mkdirSync(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "cron-run.jsonl");
+    fsSync.writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: "Status: Lv2 prosperity 4967. Cron result should stay out.",
+          },
+        }),
+      ].join("\n"),
+    );
+    fsSync.writeFileSync(
+      path.join(sessionsDir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:cron:job-1": {
+          sessionId: "cron-run",
+          sessionFile: transcriptPath,
+        },
+      }),
+    );
+
+    const entry = await buildSessionEntry(transcriptPath);
+
+    expect(entry).not.toBeNull();
+    expect(entry?.content).toBe("");
+    expect(entry?.lineMap).toEqual([]);
+    expect(entry?.generatedByCronRun).toBe(true);
+  });
+
   it("skips blank lines and invalid JSON without breaking lineMap", async () => {
     const jsonlLines = [
       "",

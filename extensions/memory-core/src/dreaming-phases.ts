@@ -766,12 +766,22 @@ async function collectSessionIngestionBatches(params: {
         continue;
       }
       const normalizedPath = normalizeSessionTranscriptPathForComparison(absolutePath);
+      const primarySessionId = parseUsageCountedSessionIdFromFileName(path.basename(absolutePath));
+      const normalizedPrimaryPath = primarySessionId
+        ? normalizeSessionTranscriptPathForComparison(
+            path.join(path.dirname(absolutePath), `${primarySessionId}.jsonl`),
+          )
+        : undefined;
+      const hasClassifiedPath = (paths: ReadonlySet<string>) =>
+        paths.has(normalizedPath) ||
+        (normalizedPrimaryPath !== undefined && paths.has(normalizedPrimaryPath));
       sessionFiles.push({
         agentId,
         absolutePath,
-        generatedByDreamingNarrative:
-          transcriptClassification.dreamingNarrativeTranscriptPaths.has(normalizedPath),
-        generatedByCronRun: transcriptClassification.cronRunTranscriptPaths.has(normalizedPath),
+        generatedByDreamingNarrative: hasClassifiedPath(
+          transcriptClassification.dreamingNarrativeTranscriptPaths,
+        ),
+        generatedByCronRun: hasClassifiedPath(transcriptClassification.cronRunTranscriptPaths),
         sessionPath: sessionPathForFile(absolutePath),
       });
     }
