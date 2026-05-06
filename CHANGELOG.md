@@ -4,6 +4,10 @@ Docs: https://docs.openclaw.ai
 
 ## Unreleased
 
+### Changes
+
+- ACPX/Codex: add optional `codexHomeBridge` plugin config so explicit Codex ACP sessions can link selected host Codex auth, config, memories, and bootstrap files while keeping ACP runtime state isolated.
+
 ### Fixes
 
 - Memory/dreaming: keep stable cron session transcripts (`agent:<id>:cron:<jobId>`) and their rotated reset/deleted artifacts out of the Dream session corpus, and add `dreaming.excludeAgents` for agent workspaces that should keep normal memory/transcripts without joining scheduled Dream sweeps.
@@ -303,7 +307,6 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Plugins/security: stop the install scanner from blocking official bundled plugin packages when `process.env` access and normal API sends only appear in distant parts of the same compiled bundle. Thanks @vincentkoc.
-
 
 ## 2026.5.3
 
