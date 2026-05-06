@@ -3,6 +3,7 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { vi } from "vitest";
 import { _resetBlueBubblesInboundDedupForTest } from "../inbound-dedupe.js";
+import { _resetBlueBubblesRecentRouteContextCacheForTest } from "../monitor-route-cache.js";
 import {
   _resetBlueBubblesShortIdState,
   clearBlueBubblesWebhookSecurityStateForTest,
@@ -121,6 +122,7 @@ export function resetBlueBubblesMonitorTestState(params: {
   vi.clearAllMocks();
   _resetBlueBubblesShortIdState();
   _resetBlueBubblesInboundDedupForTest();
+  _resetBlueBubblesRecentRouteContextCacheForTest();
   clearBlueBubblesWebhookSecurityStateForTest();
   params.extraReset?.();
   params.fetchHistoryMock.mockResolvedValue({ entries: [], resolved: true });

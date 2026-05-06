@@ -61,6 +61,7 @@ import {
   resolveReplyContextFromCache,
 } from "./monitor-reply-cache.js";
 import { fetchBlueBubblesReplyContext } from "./monitor-reply-fetch.js";
+import { applyBlueBubblesRecentMessageRouteContext } from "./monitor-route-cache.js";
 import {
   hasBlueBubblesSelfChatCopy,
   rememberBlueBubblesSelfChatCopy,
@@ -679,6 +680,18 @@ export async function processMessage(
   target: WebhookTarget,
 ): Promise<void> {
   const { account, core, runtime } = target;
+  const routeContext = applyBlueBubblesRecentMessageRouteContext({
+    accountId: account.accountId,
+    message,
+  });
+  message = routeContext.message;
+  if (routeContext.restored) {
+    logVerbose(
+      core,
+      runtime,
+      `inbound restored route context for message msg=${sanitizeForLog(message.messageId ?? "")} group=${message.isGroup} chatGuid=${sanitizeForLog(message.chatGuid ?? "")} chatId=${sanitizeForLog(message.chatId ?? "")}`,
+    );
+  }
 
   const dedupeKey = resolveBlueBubblesInboundDedupeKey(message);
 
@@ -2007,6 +2020,18 @@ export async function processReaction(
   target: WebhookTarget,
 ): Promise<void> {
   const { account, config, runtime, core } = target;
+  const routeContext = applyBlueBubblesRecentMessageRouteContext({
+    accountId: account.accountId,
+    message: reaction,
+  });
+  reaction = routeContext.message;
+  if (routeContext.restored) {
+    logVerbose(
+      core,
+      runtime,
+      `reaction restored route context msg=${sanitizeForLog(reaction.messageId)} group=${reaction.isGroup} chatGuid=${sanitizeForLog(reaction.chatGuid ?? "")} chatId=${sanitizeForLog(reaction.chatId ?? "")}`,
+    );
+  }
   const pairing = createChannelPairingController({
     core,
     channel: "bluebubbles",

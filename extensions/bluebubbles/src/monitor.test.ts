@@ -959,6 +959,74 @@ describe("BlueBubbles webhook monitor", () => {
       }
     });
 
+    it("keeps delayed attachment updates in the original group when BlueBubbles drops chat metadata", async () => {
+      vi.useFakeTimers();
+      try {
+        const core = createMockRuntime();
+        installTimingAwareInboundDebouncer(core);
+
+        const _registration = trackWebhookRegistrationForTest(
+          setupWebhookTargetForTest({
+            createCore: createMockRuntime,
+            core,
+            account: createMockAccount({
+              groupPolicy: "open",
+              dmPolicy: "open",
+            }),
+          }),
+          (nextUnregister) => {
+            unregister = nextUnregister;
+          },
+        );
+
+        const messageId = "group-attachment-update-1";
+        const chatGuid = "iMessage;+;chat123456";
+
+        await dispatchWebhookPayloadDirect(
+          createTimestampedNewMessagePayloadForTest({
+            guid: messageId,
+            text: "hello group",
+            isGroup: true,
+            chatGuid,
+            chatName: "Family Chat",
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+        expect(getFirstDispatchCall().ctx.ChatType).toBe("group");
+
+        await dispatchWebhookPayloadDirect({
+          type: "updated-message",
+          data: {
+            text: "",
+            handle: { address: "+15551234567" },
+            isGroup: false,
+            isFromMe: false,
+            guid: messageId,
+            attachments: [
+              {
+                guid: "att-1",
+                mimeType: "image/jpeg",
+                totalBytes: 1024,
+              },
+            ],
+          },
+        });
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(2);
+        const secondCall = mockDispatchReplyWithBufferedBlockDispatcher.mock.calls[1]?.[0];
+        expect(secondCall?.ctx.ChatType).toBe("group");
+        expect(secondCall?.ctx.From).toBe(`group:${chatGuid}`);
+        expect(secondCall?.ctx.To).toBe(`bluebubbles:chat_guid:${chatGuid}`);
+        expect(secondCall?.ctx.ConversationLabel).toBe(`Family Chat id:${chatGuid}`);
+        expect(secondCall?.ctx.MediaPaths).toEqual(["/tmp/test-media.jpg"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("coalesces URL text with URL balloon webhook events by associatedMessageGuid", async () => {
       vi.useFakeTimers();
       try {
