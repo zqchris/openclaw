@@ -238,6 +238,7 @@ export function resolveAcpxPluginConfig(params: {
   const stateDir = path.resolve(normalized.stateDir?.trim() || path.join(workspaceDir, "state"));
   const pluginToolsMcpBridge = normalized.pluginToolsMcpBridge === true;
   const openClawToolsMcpBridge = normalized.openClawToolsMcpBridge === true;
+  const codexHomeBridge = normalized.codexHomeBridge;
   const mcpServers = resolveConfiguredMcpServers({
     mcpServers: normalized.mcpServers,
     pluginToolsMcpBridge,
@@ -269,6 +270,14 @@ export function resolveAcpxPluginConfig(params: {
       normalized.nonInteractivePermissions ?? DEFAULT_NON_INTERACTIVE_POLICY,
     pluginToolsMcpBridge,
     openClawToolsMcpBridge,
+    codexHomeBridge: {
+      enabled: codexHomeBridge?.enabled === true,
+      sourceHome: codexHomeBridge?.sourceHome?.trim() || undefined,
+      auth: codexHomeBridge?.auth ?? true,
+      config: codexHomeBridge?.config ?? true,
+      memories: codexHomeBridge?.memories ?? true,
+      bootstrapFiles: codexHomeBridge?.bootstrapFiles ?? true,
+    },
     strictWindowsCmdWrapper:
       normalized.strictWindowsCmdWrapper ?? DEFAULT_STRICT_WINDOWS_CMD_WRAPPER,
     timeoutSeconds: normalized.timeoutSeconds ?? DEFAULT_ACPX_TIMEOUT_SECONDS,

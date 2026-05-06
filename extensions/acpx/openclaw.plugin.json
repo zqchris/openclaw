@@ -37,6 +37,31 @@
       "openClawToolsMcpBridge": {
         "type": "boolean"
       },
+      "codexHomeBridge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "sourceHome": {
+            "type": "string",
+            "minLength": 1
+          },
+          "auth": {
+            "type": "boolean"
+          },
+          "config": {
+            "type": "boolean"
+          },
+          "memories": {
+            "type": "boolean"
+          },
+          "bootstrapFiles": {
+            "type": "boolean"
+          }
+        }
+      },
       "strictWindowsCmdWrapper": {
         "type": "boolean"
       },
@@ -121,6 +146,11 @@
     "openClawToolsMcpBridge": {
       "label": "OpenClaw Tools MCP Bridge",
       "help": "Default off. When enabled, inject the built-in OpenClaw core-tools MCP server into embedded ACP sessions so ACP agents can call selected built-in tools such as cron.",
+      "advanced": true
+    },
+    "codexHomeBridge": {
+      "label": "Codex Home Bridge",
+      "help": "Default off. When enabled, explicit Codex ACP sessions share selected files from a host Codex home such as auth.json, config.toml, memories/, AGENTS.md, and model_instructions.md while keeping runtime state isolated.",
       "advanced": true
     },
     "strictWindowsCmdWrapper": {

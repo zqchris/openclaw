@@ -927,6 +927,10 @@ Docs: https://docs.openclaw.ai
 
 ## 2026.5.6
 
+### Changes
+
+- ACPX/Codex: add optional `codexHomeBridge` plugin config so explicit Codex ACP sessions can link selected host Codex auth, config, memories, and bootstrap files while keeping ACP runtime state isolated.
+
 ### Fixes
 
 - Doctor/OpenAI config: keep the 2026.5.6 release branch clear of the legacy Codex route rewrite that could change OpenAI model config during `doctor --fix`, preserving existing OpenAI routes unless a supported repair path applies.
@@ -1332,7 +1336,6 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Plugins/security: stop the install scanner from blocking official bundled plugin packages when `process.env` access and normal API sends only appear in distant parts of the same compiled bundle. Thanks @vincentkoc.
-
 
 ## 2026.5.3
 

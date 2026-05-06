@@ -21,6 +21,24 @@ export type AcpxMcpServer = {
   env: Array<{ name: string; value: string }>;
 };
 
+export type AcpxCodexHomeBridgeConfig = {
+  enabled?: boolean;
+  sourceHome?: string;
+  auth?: boolean;
+  config?: boolean;
+  memories?: boolean;
+  bootstrapFiles?: boolean;
+};
+
+export type ResolvedAcpxCodexHomeBridgeConfig = {
+  enabled: boolean;
+  sourceHome?: string;
+  auth: boolean;
+  config: boolean;
+  memories: boolean;
+  bootstrapFiles: boolean;
+};
+
 export type AcpxPluginConfig = {
   cwd?: string;
   stateDir?: string;
@@ -29,6 +47,7 @@ export type AcpxPluginConfig = {
   nonInteractivePermissions?: AcpxNonInteractivePermissionPolicy;
   pluginToolsMcpBridge?: boolean;
   openClawToolsMcpBridge?: boolean;
+  codexHomeBridge?: AcpxCodexHomeBridgeConfig;
   strictWindowsCmdWrapper?: boolean;
   timeoutSeconds?: number;
   queueOwnerTtlSeconds?: number;
@@ -44,6 +63,7 @@ export type ResolvedAcpxPluginConfig = {
   nonInteractivePermissions: AcpxNonInteractivePermissionPolicy;
   pluginToolsMcpBridge: boolean;
   openClawToolsMcpBridge: boolean;
+  codexHomeBridge: ResolvedAcpxCodexHomeBridgeConfig;
   strictWindowsCmdWrapper: boolean;
   timeoutSeconds?: number;
   queueOwnerTtlSeconds: number;
@@ -76,6 +96,19 @@ const McpServerConfigSchema = z.object({
     .describe("Environment variables for the MCP server"),
 });
 
+const CodexHomeBridgeConfigSchema = z.strictObject({
+  enabled: z.boolean({ error: "codexHomeBridge.enabled must be a boolean" }).optional(),
+  sourceHome: nonEmptyTrimmedString(
+    "codexHomeBridge.sourceHome must be a non-empty string",
+  ).optional(),
+  auth: z.boolean({ error: "codexHomeBridge.auth must be a boolean" }).optional(),
+  config: z.boolean({ error: "codexHomeBridge.config must be a boolean" }).optional(),
+  memories: z.boolean({ error: "codexHomeBridge.memories must be a boolean" }).optional(),
+  bootstrapFiles: z
+    .boolean({ error: "codexHomeBridge.bootstrapFiles must be a boolean" })
+    .optional(),
+});
+
 export const AcpxPluginConfigSchema = z.strictObject({
   cwd: nonEmptyTrimmedString("cwd must be a non-empty string").optional(),
   stateDir: nonEmptyTrimmedString("stateDir must be a non-empty string").optional(),
@@ -94,6 +127,7 @@ export const AcpxPluginConfigSchema = z.strictObject({
   openClawToolsMcpBridge: z
     .boolean({ error: "openClawToolsMcpBridge must be a boolean" })
     .optional(),
+  codexHomeBridge: CodexHomeBridgeConfigSchema.optional(),
   strictWindowsCmdWrapper: z
     .boolean({ error: "strictWindowsCmdWrapper must be a boolean" })
     .optional(),

@@ -35,12 +35,14 @@ function restoreEnv(name: keyof typeof previousEnv): void {
 }
 
 function generatedCodexPaths(stateDir: string): {
+  codexHome: string;
   configPath: string;
   wrapperPath: string;
 } {
   const baseDir = path.join(stateDir, "acpx");
   const codexHome = path.join(baseDir, "codex-home");
   return {
+    codexHome,
     configPath: path.join(codexHome, "config.toml"),
     wrapperPath: path.join(baseDir, "codex-acp-wrapper.mjs"),
   };
@@ -428,6 +430,60 @@ describe("prepareAcpxCodexAuthConfig", () => {
     expect(isolatedConfig).not.toContain(untrustedProject);
     expect(isolatedConfig).not.toContain("notify");
     expect(isolatedConfig).not.toContain("SkyComputerUseClient");
+  });
+
+  it("bridges the configured Codex home when explicitly enabled", async () => {
+    const root = await makeTempDir();
+    const sourceCodexHome = path.join(root, "source-codex");
+    const stateDir = path.join(root, "state");
+    const generated = generatedCodexPaths(stateDir);
+    const memoriesDir = path.join(sourceCodexHome, "memories");
+    await fs.mkdir(memoriesDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sourceCodexHome, "auth.json"),
+      `${JSON.stringify({ auth_mode: "chatgpt" })}\n`,
+    );
+    await fs.writeFile(
+      path.join(sourceCodexHome, "config.toml"),
+      "[features]\nmemories = true\n",
+      "utf8",
+    );
+    await fs.writeFile(path.join(memoriesDir, "MEMORY.md"), "# Codex memory\n", "utf8");
+    await fs.writeFile(path.join(sourceCodexHome, "AGENTS.md"), "Read project docs.\n", "utf8");
+    await fs.writeFile(
+      path.join(sourceCodexHome, "model_instructions.md"),
+      "Use concise answers.\n",
+      "utf8",
+    );
+    const pluginConfig = resolveAcpxPluginConfig({
+      rawConfig: {
+        codexHomeBridge: {
+          enabled: true,
+          sourceHome: sourceCodexHome,
+        },
+      },
+      workspaceDir: root,
+    });
+
+    await prepareAcpxCodexAuthConfig({
+      pluginConfig,
+      stateDir,
+      resolveInstalledCodexAcpBinPath: async () => undefined,
+    });
+
+    await expect(
+      fs.readFile(path.join(generated.codexHome, "auth.json"), "utf8"),
+    ).resolves.toContain("chatgpt");
+    await expect(fs.readFile(generated.configPath, "utf8")).resolves.toContain("memories = true");
+    await expect(
+      fs.readFile(path.join(generated.codexHome, "memories", "MEMORY.md"), "utf8"),
+    ).resolves.toContain("Codex memory");
+    await expect(
+      fs.readFile(path.join(generated.codexHome, "AGENTS.md"), "utf8"),
+    ).resolves.toContain("project docs");
+    await expect(
+      fs.readFile(path.join(generated.codexHome, "model_instructions.md"), "utf8"),
+    ).resolves.toContain("concise");
   });
 
   it("normalizes an explicitly configured Codex ACP command to the local wrapper", async () => {

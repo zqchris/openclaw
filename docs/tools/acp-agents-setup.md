@@ -219,6 +219,45 @@ or flag value should remain one argv token:
 
 See [Plugins](/tools/plugin).
 
+### Codex home bridge
+
+The Codex ACP adapter normally uses an OpenClaw-managed `CODEX_HOME` under the
+acpx state directory. This keeps Codex ACP sessions isolated from the
+operator's personal Codex CLI account, config, skills, memories, and thread
+state.
+
+If you intentionally want explicit Codex ACP sessions to share the host Codex
+CLI account, config, and memory files, enable the bridge:
+
+```json5
+{
+  plugins: {
+    entries: {
+      acpx: {
+        enabled: true,
+        config: {
+          codexHomeBridge: {
+            enabled: true,
+            sourceHome: "~/.codex",
+          },
+        },
+      },
+    },
+  },
+}
+```
+
+When enabled, the bridge links these files/directories into the managed Codex
+ACP home when they exist in `sourceHome`: `auth.json`, `config.toml`,
+`memories/`, `AGENTS.md`, and `model_instructions.md`. Runtime state such as
+sessions, logs, SQLite databases, and history remains in the managed ACP home
+unless the operator links it separately. This gives ACP Codex the same account
+and memory context without binding it to the exact same native Codex desktop
+thread.
+
+You can disable individual bridge pieces with `auth: false`, `config: false`,
+`memories: false`, or `bootstrapFiles: false`.
+
 ### Automatic dependency install
 
 When you install OpenClaw globally with `npm install -g openclaw`, the acpx
