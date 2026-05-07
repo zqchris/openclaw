@@ -933,6 +933,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- Feishu/Lark: keep topic-session replies, direct-message topic replies, typing reactions, message-tool sends, and subagent completion notices anchored to the active topic while preserving thread delivery for text, cards, and media.
 - Doctor/OpenAI config: keep the 2026.5.6 release branch clear of the legacy Codex route rewrite that could change OpenAI model config during `doctor --fix`, preserving existing OpenAI routes unless a supported repair path applies.
 - Memory/dreaming: keep stable cron session transcripts (`agent:<id>:cron:<jobId>`) and their rotated reset/deleted artifacts out of the Dream session corpus, and add `dreaming.excludeAgents` for agent workspaces that should keep normal memory/transcripts without joining scheduled Dream sweeps.
 - Plugins/runtime fetch: drop third-party symbol metadata from plain request header dictionaries before passing them into native `fetch` or `Headers`, so SDK and guarded/proxy fetch paths do not reject otherwise valid plugin requests. Fixes #77846. Thanks @shakkernerd.
@@ -1033,7 +1034,6 @@ Docs: https://docs.openclaw.ai
 - Update/plugins: tolerate corrupt managed plugin records during update so core package updates can still complete and report the plugin repair path.
 - Update: stop dev-channel updates cleanly after a fetch failure instead of continuing into later update steps.
 - Agents/generated media: treat attachment-style message tool actions as completed chat sends, preventing duplicate fallback media posts when generated files were already uploaded.
-
 
 ## 2026.5.4
 

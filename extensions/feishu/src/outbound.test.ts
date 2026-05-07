@@ -383,11 +383,35 @@ describe("feishuOutbound.sendText local-image auto-convert", () => {
       accountId: "main",
     });
 
-    expect(sendMessageCall()?.to).toBe("chat_1");
-    expect(sendMessageCall()?.text).toBe("hello");
-    expect(sendMessageCall()?.replyToMessageId).toBe("om_thread_2");
-    expect(sendMessageCall()?.replyInThread).toBe(true);
-    expect(sendMessageCall()?.accountId).toBe("main");
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "chat_1",
+        text: "hello",
+        replyToMessageId: "om_thread_2",
+        replyInThread: true,
+        accountId: "main",
+      }),
+    );
+  });
+
+  it("does not mark Feishu container thread IDs as reply_in_thread targets", async () => {
+    await sendText({
+      cfg: emptyConfig,
+      to: "chat_1",
+      text: "hello",
+      threadId: "omt_topic_container",
+      accountId: "main",
+    });
+
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "chat_1",
+        text: "hello",
+        replyToMessageId: "omt_topic_container",
+        replyInThread: false,
+        accountId: "main",
+      }),
+    );
   });
 });
 
@@ -1106,13 +1130,23 @@ describe("feishuOutbound.sendMedia renderMode", () => {
       accountId: "main",
     });
 
-    expect(sendMediaCall()?.to).toBe("chat_1");
-    expect(sendMediaCall()?.mediaUrl).toBe("https://example.com/image.png");
-    expect(sendMediaCall()?.replyToMessageId).toBe("om_thread_1");
-    expect(sendMediaCall()?.accountId).toBe("main");
-    expect(sendMessageCall()?.to).toBe("chat_1");
-    expect(sendMessageCall()?.text).toBe("caption");
-    expect(sendMessageCall()?.replyToMessageId).toBe("om_thread_1");
-    expect(sendMessageCall()?.accountId).toBe("main");
+    expect(sendMediaFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "chat_1",
+        mediaUrl: "https://example.com/image.png",
+        replyToMessageId: "om_thread_1",
+        replyInThread: true,
+        accountId: "main",
+      }),
+    );
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "chat_1",
+        text: "caption",
+        replyToMessageId: "om_thread_1",
+        replyInThread: true,
+        accountId: "main",
+      }),
+    );
   });
 });

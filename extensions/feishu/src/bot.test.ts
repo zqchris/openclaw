@@ -5,7 +5,7 @@ import { resolveGroupSessionKey } from "openclaw/plugin-sdk/session-store-runtim
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClawdbotConfig, PluginRuntime } from "../runtime-api.js";
 import type { FeishuMessageEvent } from "./bot.js";
-import { handleFeishuMessage } from "./bot.js";
+import { handleFeishuMessage, parseFeishuMessageEvent } from "./bot.js";
 import { createFeishuMessageReceiveHandler } from "./monitor.message-handler.js";
 import { setFeishuRuntime } from "./runtime.js";
 
@@ -2327,6 +2327,69 @@ describe("handleFeishuMessage command authorization", () => {
     expect(routeRequest.parentPeer).toEqual({ kind: "group", id: "oc-group" });
   });
 
+  it("falls back to reply ancestors for thread root when Feishu omits root_id", () => {
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-topic-user" } },
+      message: {
+        message_id: "om_topic_reply_message",
+        chat_id: "oc-group",
+        chat_type: "group",
+        reply_target_message_id: "om_reply_target_root",
+        parent_id: "om_parent_message",
+        upper_message_id: "om_upper_message",
+        message_type: "text",
+        content: JSON.stringify({ text: "topic reply" }),
+      },
+    };
+
+    const ctx = parseFeishuMessageEvent(event);
+
+    expect(ctx.rootId).toBe("om_reply_target_root");
+    expect(ctx.replyTargetMessageId).toBe("om_reply_target_root");
+    expect(ctx.parentId).toBe("om_parent_message");
+    expect(ctx.upperMessageId).toBe("om_upper_message");
+  });
+
+  it("falls back to parent_id before upper_message_id when root_id and reply target are missing", () => {
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-topic-user" } },
+      message: {
+        message_id: "om_topic_reply_message",
+        chat_id: "oc-group",
+        chat_type: "group",
+        parent_id: "om_parent_message",
+        upper_message_id: "om_upper_message",
+        message_type: "text",
+        content: JSON.stringify({ text: "topic reply" }),
+      },
+    };
+
+    const ctx = parseFeishuMessageEvent(event);
+
+    expect(ctx.rootId).toBe("om_parent_message");
+  });
+
+  it("preserves thread_id as the topic key when root_id is missing", () => {
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-topic-user" } },
+      message: {
+        message_id: "om_topic_reply_message",
+        chat_id: "oc-group",
+        chat_type: "group",
+        reply_target_message_id: "om_reply_target",
+        thread_id: "omt_topic_thread",
+        message_type: "text",
+        content: JSON.stringify({ text: "topic reply" }),
+      },
+    };
+
+    const ctx = parseFeishuMessageEvent(event);
+
+    expect(ctx.rootId).toBeUndefined();
+    expect(ctx.replyTargetMessageId).toBe("om_reply_target");
+    expect(ctx.threadId).toBe("omt_topic_thread");
+  });
+
   it("keeps root_id as topic key when root_id and thread_id both exist", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
 
@@ -2573,6 +2636,54 @@ describe("handleFeishuMessage command authorization", () => {
       { kind: "group", id: "oc-group:topic:msg-new-topic-root" },
       { kind: "group", id: "oc-group" },
     );
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        MessageThreadId: "msg-new-topic-root",
+      }),
+    );
+  });
+
+  it("keeps subagent completion anchored to a new reply-in-thread group message", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          groups: {
+            "oc-group": {
+              requireMention: false,
+              groupSessionScope: "group",
+              replyInThread: "enabled",
+            },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-thread-user" } },
+      message: {
+        message_id: "om_thread_starter",
+        chat_id: "oc-group",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "spawn a subagent" }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_thread_starter",
+        replyInThread: true,
+      }),
+    );
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        MessageThreadId: "om_thread_starter",
+      }),
+    );
   });
 
   it("keeps topic session key stable after first turn creates a thread", async () => {
@@ -2708,13 +2819,73 @@ describe("handleFeishuMessage command authorization", () => {
 
     await dispatchMessage({ cfg, event });
 
-    const dispatcherOptions = mockCallArg<{ replyToMessageId?: string; rootId?: string }>(
-      mockCreateFeishuReplyDispatcher,
-      0,
-      0,
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_root_topic",
+        typingMessageId: "om_child_message",
+        rootId: "om_root_topic",
+      }),
     );
-    expect(dispatcherOptions.replyToMessageId).toBe("om_root_topic");
-    expect(dispatcherOptions.rootId).toBe("om_root_topic");
+  });
+
+  it("uses the topic root for delivery while preserving reply_target as context", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+    mockGetMessageFeishu.mockResolvedValueOnce({
+      messageId: "om_actual_reply_target",
+      chatId: "oc-group",
+      content: "fresh parent",
+      contentType: "text",
+    });
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          groups: {
+            "oc-group": {
+              requireMention: false,
+              replyInThread: "enabled",
+            },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-topic-user" } },
+      message: {
+        message_id: "om_child_message_with_target",
+        root_id: "om_stale_root_topic",
+        parent_id: "om_stale_parent",
+        reply_target_message_id: "om_actual_reply_target",
+        chat_id: "oc-group",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "reply inside topic" }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockGetMessageFeishu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "om_actual_reply_target",
+      }),
+    );
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ReplyToId: "om_actual_reply_target",
+        ReplyToBody: "fresh parent",
+        RootMessageId: "om_stale_root_topic",
+      }),
+    );
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_stale_root_topic",
+        typingMessageId: "om_child_message_with_target",
+        rootId: "om_stale_root_topic",
+        replyInThread: true,
+      }),
+    );
   });
 
   it("replies to triggering message in normal group even when root_id is present (#32980)", async () => {
@@ -2747,16 +2918,16 @@ describe("handleFeishuMessage command authorization", () => {
 
     await dispatchMessage({ cfg, event });
 
-    const dispatcherOptions = mockCallArg<{ replyToMessageId?: string; rootId?: string }>(
-      mockCreateFeishuReplyDispatcher,
-      0,
-      0,
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_quote_reply",
+        typingMessageId: "om_quote_reply",
+        rootId: "om_original_msg",
+      }),
     );
-    expect(dispatcherOptions.replyToMessageId).toBe("om_quote_reply");
-    expect(dispatcherOptions.rootId).toBe("om_original_msg");
   });
 
-  it("replies to topic root in topic-mode group with root_id", async () => {
+  it("replies to the topic root in topic-mode group with root_id", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
 
     const cfg: ClawdbotConfig = {
@@ -2786,16 +2957,16 @@ describe("handleFeishuMessage command authorization", () => {
 
     await dispatchMessage({ cfg, event });
 
-    const dispatcherOptions = mockCallArg<{ replyToMessageId?: string; rootId?: string }>(
-      mockCreateFeishuReplyDispatcher,
-      0,
-      0,
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_topic_root",
+        typingMessageId: "om_topic_reply",
+        rootId: "om_topic_root",
+      }),
     );
-    expect(dispatcherOptions.replyToMessageId).toBe("om_topic_root");
-    expect(dispatcherOptions.rootId).toBe("om_topic_root");
   });
 
-  it("replies to topic root in topic-sender group with root_id", async () => {
+  it("replies to the topic root in topic-sender group with root_id", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
 
     const cfg: ClawdbotConfig = {
@@ -2825,13 +2996,63 @@ describe("handleFeishuMessage command authorization", () => {
 
     await dispatchMessage({ cfg, event });
 
-    const dispatcherOptions = mockCallArg<{ replyToMessageId?: string; rootId?: string }>(
-      mockCreateFeishuReplyDispatcher,
-      0,
-      0,
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_topic_sender_root",
+        typingMessageId: "om_topic_sender_reply",
+        rootId: "om_topic_sender_root",
+      }),
     );
-    expect(dispatcherOptions.replyToMessageId).toBe("om_topic_sender_root");
-    expect(dispatcherOptions.rootId).toBe("om_topic_sender_root");
+  });
+
+  it("keeps direct-message topic replies in the topic instead of falling back to top-level DM", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+    mockGetMessageFeishu.mockResolvedValueOnce({
+      messageId: "om_dm_topic_root",
+      chatId: "oc-dm-chat",
+      content: "topic starter",
+      contentType: "post",
+    });
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-direct-topic-user" } },
+      message: {
+        message_id: "om_dm_topic_reply",
+        root_id: "om_dm_topic_root",
+        reply_target_message_id: "om_dm_topic_root",
+        chat_id: "oc-dm-chat",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: "reply from direct topic" }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_dm_topic_root",
+        typingMessageId: "om_dm_topic_reply",
+        skipReplyToInMessages: false,
+        replyInThread: true,
+        threadReply: true,
+      }),
+    );
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ChatType: "direct",
+        ReplyToId: "om_dm_topic_root",
+        MessageThreadId: "om_dm_topic_root",
+      }),
+    );
   });
 
   it("forces thread replies when inbound message contains thread_id", async () => {
