@@ -106,6 +106,27 @@ describe("createAgentToolResultMiddlewareRunner", () => {
     expect(result.details).toEqual({ status: "error", middlewareError: true });
   });
 
+  it("preserves untransformed tool results even when they exceed middleware bounds", async () => {
+    // Regression: middleware bounds (MAX_MIDDLEWARE_DETAILS_*) must only apply
+    // when middleware rewrites or mutates the result. A no-op handler must not
+    // cause the original tool result to be replaced with a synthetic failure,
+    // because that flips successful sends into "Message failed" in cron flows.
+    const original = {
+      content: [{ type: "text" as const, text: "ok" }],
+      details: { payload: "x".repeat(150_000) },
+    };
+    const runner = createAgentToolResultMiddlewareRunner({ runtime: "pi" }, [() => undefined]);
+
+    const result = await runner.applyToolResultMiddleware({
+      toolCallId: "call-1",
+      toolName: "message",
+      args: {},
+      result: original,
+    });
+
+    expect(result).toBe(original);
+  });
+
   it("accepts well-formed middleware results", async () => {
     const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [
       (_event, ctx) => ({

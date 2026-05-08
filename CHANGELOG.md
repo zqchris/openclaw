@@ -933,6 +933,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- Agents/tool-result middleware: only validate tool results that middleware actually rewrites or mutates in place, so untransformed `message`/cron tool outputs whose `details` happen to exceed the middleware bounds are no longer silently swapped for a synthetic failure result that flipped successful Feishu/BlueBubbles cron sends into ⚠️ ✉️ Message failed.
 - Feishu/Lark: keep topic-session replies, direct-message topic replies, typing reactions, message-tool sends, and subagent completion notices anchored to the active topic while preserving thread delivery for text, cards, and media.
 - Doctor/OpenAI config: keep the 2026.5.6 release branch clear of the legacy Codex route rewrite that could change OpenAI model config during `doctor --fix`, preserving existing OpenAI routes unless a supported repair path applies.
 - Memory/dreaming: keep stable cron session transcripts (`agent:<id>:cron:<jobId>`) and their rotated reset/deleted artifacts out of the Dream session corpus, and add `dreaming.excludeAgents` for agent workspaces that should keep normal memory/transcripts without joining scheduled Dream sweeps.

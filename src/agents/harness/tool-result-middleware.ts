@@ -147,22 +147,40 @@ export function createAgentToolResultMiddlewareRunner(
       let current = event.result;
       for (const handler of await resolveHandlers()) {
         try {
+          // Snapshot the content/details references so we can detect in-place
+          // mutation by handlers that mutate `event.result` instead of
+          // returning a new result (legacy Pi parity).
+          const preContent = current.content;
+          const preDetails = current.details;
           const next = await handler({ ...event, result: current }, middlewareContext);
-          // Middleware may mutate event.result in place for legacy Pi parity.
-          // Validate the current object after every handler so in-place writes
-          // cannot bypass the same shape and size bounds as returned results.
-          const candidate = next?.result ?? current;
-          if (isValidMiddlewareToolResult(candidate)) {
-            current = candidate;
-          } else {
-            log.warn(
-              `[${ctx.runtime}] discarded invalid tool result middleware output for ${truncateUtf16Safe(
-                event.toolName,
-                120,
-              )}`,
-            );
-            return buildMiddlewareFailureResult();
+          const transformed = next?.result;
+          if (transformed) {
+            if (isValidMiddlewareToolResult(transformed)) {
+              current = transformed;
+            } else {
+              log.warn(
+                `[${ctx.runtime}] discarded invalid tool result middleware output for ${truncateUtf16Safe(
+                  event.toolName,
+                  120,
+                )}`,
+              );
+              return buildMiddlewareFailureResult();
+            }
+          } else if (current.content !== preContent || current.details !== preDetails) {
+            // Handler mutated event.result in place. Validate the new shape so
+            // in-place writes cannot bypass the same bounds as returned results.
+            if (!isValidMiddlewareToolResult(current)) {
+              log.warn(
+                `[${ctx.runtime}] discarded invalid tool result middleware output for ${truncateUtf16Safe(
+                  event.toolName,
+                  120,
+                )}`,
+              );
+              return buildMiddlewareFailureResult();
+            }
           }
+          // Untransformed pass-through: keep the original tool result as-is.
+          // Bounds only apply when middleware actually rewrites the result.
         } catch {
           log.warn(
             `[${ctx.runtime}] tool result middleware failed for ${truncateUtf16Safe(
