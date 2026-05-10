@@ -253,6 +253,45 @@ function buildNamedProgressLine(
   };
 }
 
+// Walk the line list and merge runs of consecutive ChannelProgressDraftLines
+// that share the same toolName + kind into a single line whose meta enumerates
+// all the original metas. Without this, a batch of N exec calls each becomes
+// its own row and the maxLines cap silently drops oldest entries instead of
+// surfacing them.
+function collapseConsecutiveSameToolLines(
+  lines: readonly (string | ChannelProgressDraftLine)[],
+  options?: ChannelProgressLineOptions,
+): Array<string | ChannelProgressDraftLine> {
+  const out: Array<string | ChannelProgressDraftLine> = [];
+  let i = 0;
+  while (i < lines.length) {
+    const head = lines[i];
+    if (typeof head === "string" || !head.toolName) {
+      out.push(head);
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < lines.length) {
+      const next = lines[j];
+      if (typeof next === "string") break;
+      if (next.toolName !== head.toolName || next.kind !== head.kind) break;
+      j += 1;
+    }
+    if (j === i + 1) {
+      out.push(head);
+    } else {
+      const metas = (lines.slice(i, j) as ChannelProgressDraftLine[])
+        .map((l) => l.detail)
+        .filter((d): d is string => Boolean(d));
+      const merged = buildNamedProgressLine(head.kind, head.toolName, metas, options);
+      out.push(merged ?? head);
+    }
+    i = j;
+  }
+  return out;
+}
+
 function itemKindToToolName(kind: string | undefined): string | undefined {
   switch (normalizeOptionalLowercaseString(kind)) {
     case "command":
@@ -814,9 +853,10 @@ export function formatChannelProgressDraftText(params: {
   const maxLines = resolveChannelProgressDraftMaxLines(params.entry);
   const formatLine = params.formatLine ?? ((line: string) => line);
   const bullet = params.bullet ?? "•";
+  const collapsedLines = collapseConsecutiveSameToolLines(params.lines);
   const rawLines: Array<string | ChannelProgressDraftLine | { draftLabel: string }> = label
-    ? [{ draftLabel: label }, ...params.lines]
-    : params.lines;
+    ? [{ draftLabel: label }, ...collapsedLines]
+    : collapsedLines;
   const lines = rawLines
     .map((line) => {
       const isLabelLine = typeof line === "object" && line !== null && "draftLabel" in line;

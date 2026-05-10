@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildChannelProgressDraftLine,
+  type ChannelProgressDraftLine,
   createChannelProgressDraftGate,
   DEFAULT_PROGRESS_DRAFT_LABELS,
   formatChannelProgressDraftLine,
@@ -429,5 +430,95 @@ describe("channel-streaming", () => {
     expect(isChannelProgressDraftWorkToolName("react")).toBe(false);
     expect(isChannelProgressDraftWorkToolName("web_search")).toBe(true);
     expect(isChannelProgressDraftWorkToolName("exec")).toBe(true);
+  });
+
+  describe("consecutive same-tool collapse", () => {
+    const execLine = (cmd: string): ChannelProgressDraftLine => ({
+      kind: "tool",
+      text: `🛠️ Exec: ${cmd}`,
+      label: "Exec",
+      icon: "🛠️",
+      detail: cmd,
+      toolName: "exec",
+    });
+    const readLine = (path: string): ChannelProgressDraftLine => ({
+      kind: "tool",
+      text: `📖 Read: ${path}`,
+      label: "Read",
+      icon: "📖",
+      detail: path,
+      toolName: "read",
+    });
+    const writeLine = (path: string): ChannelProgressDraftLine => ({
+      kind: "tool",
+      text: `✍️ Write: ${path}`,
+      label: "Write",
+      icon: "✍️",
+      detail: path,
+      toolName: "write",
+    });
+    // Tool lines may be bullet-prefixed ("• plain") or icon-prefixed ("🛠️ Exec: …").
+    // Drop the label header (line 0) and count remaining non-empty lines.
+    const toolLines = (out: string) =>
+      out
+        .split("\n")
+        .slice(1)
+        .filter((l) => l.length > 0);
+
+    it("collapses N consecutive same-tool lines into one, preserving oldest and newest meta", () => {
+      const entry = { streaming: { progress: { label: "Working", maxLines: 8, render: "rich" } } };
+      const tenExecs = Array.from({ length: 10 }, (_, i) => execLine(`cmd${i + 1}`));
+      const out = formatChannelProgressDraftText({ entry, lines: tenExecs });
+      const lines = toolLines(out);
+      expect(lines.length).toBe(1);
+      expect(lines[0]).toContain("cmd1");
+      expect(lines[0]).toContain("cmd10");
+    });
+
+    it("does not merge runs of different tools", () => {
+      const entry = { streaming: { progress: { label: "Working", maxLines: 10, render: "rich" } } };
+      const lines = [
+        execLine("cmdA"),
+        execLine("cmdB"),
+        readLine("/foo"),
+        readLine("/bar"),
+        execLine("cmdC"),
+      ];
+      const out = formatChannelProgressDraftText({ entry, lines });
+      const tl = toolLines(out);
+      expect(tl.length).toBe(3);
+      expect(tl[0]).toMatch(/cmdA/);
+      expect(tl[0]).toMatch(/cmdB/);
+      expect(tl[1]).toMatch(/foo/);
+      expect(tl[1]).toMatch(/bar/);
+      expect(tl[2]).toMatch(/cmdC/);
+    });
+
+    it("respects maxLines cap on the post-collapse result", () => {
+      const entry = { streaming: { progress: { label: "Working", maxLines: 2, render: "rich" } } };
+      const lines = [execLine("cmdA"), readLine("/foo"), writeLine("/bar"), execLine("cmdB")];
+      const out = formatChannelProgressDraftText({ entry, lines });
+      const tl = toolLines(out);
+      expect(tl.length).toBe(2);
+      expect(tl[0]).toMatch(/bar/);
+      expect(tl[1]).toMatch(/cmdB/);
+    });
+
+    it("leaves untyped string lines untouched", () => {
+      const entry = { streaming: { progress: { label: "Working", maxLines: 10 } } };
+      const out = formatChannelProgressDraftText({ entry, lines: ["plain1", "plain2"] });
+      expect(out).toContain("plain1");
+      expect(out).toContain("plain2");
+    });
+
+    it("does not modify a single tool run", () => {
+      const entry = { streaming: { progress: { label: "Working", maxLines: 10 } } };
+      const out = formatChannelProgressDraftText({ entry, lines: [execLine("ls")] });
+      const tl = toolLines(out);
+      expect(tl.length).toBe(1);
+      expect(tl[0]).toMatch(/ls/);
+      expect(tl[0]).not.toContain(",");
+      expect(tl[0]).not.toContain(";");
+    });
   });
 });
