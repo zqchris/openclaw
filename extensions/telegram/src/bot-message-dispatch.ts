@@ -15,9 +15,10 @@ import {
   deriveDurableFinalDeliveryRequirements,
 } from "openclaw/plugin-sdk/channel-message";
 import {
+  buildChannelProgressDraftLine,
+  buildChannelProgressDraftLineForEntry,
+  type ChannelProgressDraftLine,
   createChannelProgressDraftGate,
-  formatChannelProgressDraftLine,
-  formatChannelProgressDraftLineForEntry,
   formatChannelProgressDraftText,
   isChannelProgressDraftWorkToolName,
   resolveChannelProgressDraftMaxLines,
@@ -586,7 +587,7 @@ export const dispatchTelegramMessage = async ({
   const streamToolProgressEnabled =
     Boolean(answerLane.stream) && resolveChannelStreamingPreviewToolProgress(telegramCfg);
   let streamToolProgressSuppressed = false;
-  let streamToolProgressLines: string[] = [];
+  let streamToolProgressLines: Array<string | ChannelProgressDraftLine> = [];
   let lastAnswerPartialText = "";
   let activeAnswerDraftIsToolProgressOnly = false;
   function resetAnswerToolProgressDraft() {
@@ -601,6 +602,15 @@ export const dispatchTelegramMessage = async ({
     }
     activeAnswerDraftIsToolProgressOnly = true;
   }
+  const sanitizeStructuredLine = (line: ChannelProgressDraftLine): ChannelProgressDraftLine => {
+    const safeText = sanitizeProgressMarkdownText(line.text?.replace(/\s+/g, " ").trim() ?? "");
+    const safeDetail = line.detail
+      ? sanitizeProgressMarkdownText(line.detail.replace(/\s+/g, " ").trim())
+      : line.detail;
+    return { ...line, text: safeText, ...(safeDetail !== undefined ? { detail: safeDetail } : {}) };
+  };
+  const lineDisplayText = (line: string | ChannelProgressDraftLine | undefined): string =>
+    typeof line === "string" ? line : (line?.text ?? "");
   const renderProgressDraft = async (options?: { flush?: boolean }) => {
     if (!answerLane.stream || streamMode !== "progress") {
       return;
@@ -627,7 +637,7 @@ export const dispatchTelegramMessage = async ({
     onStart: () => renderProgressDraft({ flush: true }),
   });
   const pushStreamToolProgress = async (
-    line?: string,
+    line?: string | ChannelProgressDraftLine,
     options?: { toolName?: string; startImmediately?: boolean },
   ) => {
     if (!answerLane.stream) {
@@ -636,16 +646,24 @@ export const dispatchTelegramMessage = async ({
     if (options?.toolName !== undefined && !isChannelProgressDraftWorkToolName(options.toolName)) {
       return;
     }
-    const normalized = sanitizeProgressMarkdownText(line?.replace(/\s+/g, " ").trim() ?? "");
+    const normalizedText = sanitizeProgressMarkdownText(
+      lineDisplayText(line).replace(/\s+/g, " ").trim(),
+    );
+    const toStore: string | ChannelProgressDraftLine | undefined =
+      line === undefined
+        ? undefined
+        : typeof line === "string"
+          ? normalizedText
+          : sanitizeStructuredLine(line);
     if (streamMode !== "progress") {
-      if (!streamToolProgressEnabled || streamToolProgressSuppressed || !normalized) {
+      if (!streamToolProgressEnabled || streamToolProgressSuppressed || !normalizedText) {
         return;
       }
-      const previous = streamToolProgressLines.at(-1);
-      if (previous === normalized) {
+      const previousText = lineDisplayText(streamToolProgressLines.at(-1));
+      if (previousText === normalizedText) {
         return;
       }
-      streamToolProgressLines = [...streamToolProgressLines, normalized].slice(
+      streamToolProgressLines = [...streamToolProgressLines, toStore!].slice(
         -resolveChannelProgressDraftMaxLines(telegramCfg),
       );
       const streamText = formatChannelProgressDraftText({
@@ -661,10 +679,10 @@ export const dispatchTelegramMessage = async ({
       answerLane.stream.update(streamText);
       return;
     }
-    if (streamToolProgressEnabled && !streamToolProgressSuppressed && normalized) {
-      const previous = streamToolProgressLines.at(-1);
-      if (previous !== normalized) {
-        streamToolProgressLines = [...streamToolProgressLines, normalized].slice(
+    if (streamToolProgressEnabled && !streamToolProgressSuppressed && normalizedText) {
+      const previousText = lineDisplayText(streamToolProgressLines.at(-1));
+      if (previousText !== normalizedText) {
+        streamToolProgressLines = [...streamToolProgressLines, toStore!].slice(
           -resolveChannelProgressDraftMaxLines(telegramCfg),
         );
       }
@@ -673,7 +691,7 @@ export const dispatchTelegramMessage = async ({
       options?.startImmediately &&
       streamToolProgressEnabled &&
       !streamToolProgressSuppressed &&
-      normalized
+      normalizedText
     ) {
       const alreadyStarted = progressDraftGate.hasStarted;
       await progressDraftGate.startNow();
@@ -1471,7 +1489,7 @@ export const dispatchTelegramMessage = async ({
                   onToolStart: async (payload) => {
                     const toolName = payload.name?.trim();
                     const progressPromise = pushStreamToolProgress(
-                      formatChannelProgressDraftLineForEntry(
+                      buildChannelProgressDraftLineForEntry(
                         telegramCfg,
                         {
                           event: "tool",
@@ -1490,7 +1508,7 @@ export const dispatchTelegramMessage = async ({
                   },
                   onItemEvent: async (payload) => {
                     await pushStreamToolProgress(
-                      formatChannelProgressDraftLineForEntry(telegramCfg, {
+                      buildChannelProgressDraftLineForEntry(telegramCfg, {
                         event: "item",
                         itemKind: payload.kind,
                         title: payload.title,
@@ -1508,7 +1526,7 @@ export const dispatchTelegramMessage = async ({
                       return;
                     }
                     await pushStreamToolProgress(
-                      formatChannelProgressDraftLine({
+                      buildChannelProgressDraftLine({
                         event: "plan",
                         phase: payload.phase,
                         title: payload.title,
@@ -1522,7 +1540,7 @@ export const dispatchTelegramMessage = async ({
                       return;
                     }
                     await pushStreamToolProgress(
-                      formatChannelProgressDraftLine({
+                      buildChannelProgressDraftLine({
                         event: "approval",
                         phase: payload.phase,
                         title: payload.title,
@@ -1537,7 +1555,7 @@ export const dispatchTelegramMessage = async ({
                       return;
                     }
                     await pushStreamToolProgress(
-                      formatChannelProgressDraftLine({
+                      buildChannelProgressDraftLine({
                         event: "command-output",
                         phase: payload.phase,
                         title: payload.title,
@@ -1552,7 +1570,7 @@ export const dispatchTelegramMessage = async ({
                       return;
                     }
                     await pushStreamToolProgress(
-                      formatChannelProgressDraftLine({
+                      buildChannelProgressDraftLine({
                         event: "patch",
                         phase: payload.phase,
                         title: payload.title,

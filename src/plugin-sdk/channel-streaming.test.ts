@@ -520,5 +520,32 @@ describe("channel-streaming", () => {
       expect(tl[0]).not.toContain(",");
       expect(tl[0]).not.toContain(";");
     });
+
+    // Reproduces the production Telegram bot-message-dispatch flow:
+    // each agent event becomes a built ChannelProgressDraftLine, lines
+    // accumulate in a buffer, and only the final formatChannelProgressDraftText
+    // sees the buffer. The bug screenshot showed three "🧠 Memory Search:"
+    // lines that should have collapsed into one.
+    it("collapses lines built by buildChannelProgressDraftLineForEntry (telegram dispatch shape)", () => {
+      const entry = { streaming: { progress: { label: "Working", maxLines: 4, render: "rich" } } };
+      // Short queries so the joined line fits under DEFAULT_PROGRESS_DRAFT_MAX_LINE_CHARS
+      // and head…tail truncation does not eat the assertions.
+      const events = [
+        { event: "tool" as const, name: "memory_search", args: { query: "alpha" } },
+        { event: "tool" as const, name: "memory_search", args: { query: "beta" } },
+        { event: "tool" as const, name: "memory_search", args: { query: "gamma" } },
+      ];
+      const lines = events
+        .map((e) => buildChannelProgressDraftLine(e))
+        .filter((l): l is NonNullable<typeof l> => l != null);
+      expect(lines.length).toBe(3);
+      expect(lines.every((l) => l.toolName === "memory_search")).toBe(true);
+      const out = formatChannelProgressDraftText({ entry, lines });
+      const tl = toolLines(out);
+      expect(tl.length).toBe(1);
+      expect(tl[0]).toContain("alpha");
+      expect(tl[0]).toContain("beta");
+      expect(tl[0]).toContain("gamma");
+    });
   });
 });
