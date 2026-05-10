@@ -28,6 +28,8 @@ import {
   parseMessageContent,
   resolveFeishuGroupSession,
   resolveFeishuMediaList,
+  resolveFeishuReferencedMessageMedia,
+  toMessageResourceType,
 } from "./bot-content.js";
 import {
   buildAgentMediaPayload,
@@ -62,6 +64,7 @@ import {
   type FeishuMessageContext,
   type FeishuMediaInfo,
   type FeishuMessageInfo,
+  type FeishuMessageMediaKeys,
   type ResolvedFeishuAccount,
 } from "./types.js";
 import type { DynamicAgentCreationConfig } from "./types.js";
@@ -964,7 +967,7 @@ export async function handleFeishuMessage(params: {
 
     // Resolve media from message
     const mediaMaxBytes = (feishuCfg?.mediaMaxMb ?? 30) * 1024 * 1024; // 30MB default
-    const mediaList = await resolveFeishuMediaList({
+    const mediaList: FeishuMediaInfo[] = await resolveFeishuMediaList({
       cfg,
       messageId: ctx.messageId,
       messageType: event.message.message_type,
@@ -986,7 +989,63 @@ export async function handleFeishuMessage(params: {
       return;
     }
 
-    const mediaPayload = buildAgentMediaPayload(mediaList);
+    // Per-turn budget for downloading attachments from referenced messages
+    // (quoted/root/topic-history). `historyMediaMaxMb` defaults to 5× mediaMaxMb
+    // — generous enough for a 20-message thread of typical-sized attachments
+    // without runaway cost on a hot topic. Set to 0 to disable referenced-media
+    // downloads entirely. Cache hits never deduct from the budget, so a busy
+    // topic that re-reads the same history pays the download cost once per key.
+    const historyMediaMaxBytes = Math.max(
+      0,
+      (feishuCfg?.historyMediaMaxMb ?? (feishuCfg?.mediaMaxMb ?? 30) * 5) * 1024 * 1024,
+    );
+    let historyMediaBudgetUsed = 0;
+    let historyMediaBudgetWarned = false;
+    const tryDownloadReferencedMessageMedia = async (downloadParams: {
+      messageInfo: { messageId: string; contentType: string; mediaKeys?: FeishuMessageMediaKeys };
+      fallbackMessageId?: string;
+      label: string;
+    }): Promise<FeishuMediaInfo[]> => {
+      const { messageInfo, fallbackMessageId, label } = downloadParams;
+      const mediaKeys = messageInfo.mediaKeys;
+      if (!mediaKeys) {
+        return [];
+      }
+      if (historyMediaMaxBytes === 0) {
+        if (!historyMediaBudgetWarned) {
+          historyMediaBudgetWarned = true;
+          log(
+            `feishu[${account.accountId}]: historyMediaMaxMb=0 — skipping ${label} attachment download for message=${messageInfo.messageId || fallbackMessageId || "?"}`,
+          );
+        }
+        return [];
+      }
+      if (historyMediaBudgetUsed >= historyMediaMaxBytes) {
+        if (!historyMediaBudgetWarned) {
+          historyMediaBudgetWarned = true;
+          log(
+            `feishu[${account.accountId}]: history media budget exhausted (${historyMediaBudgetUsed}/${historyMediaMaxBytes}B) — skipping remaining ${label} attachments; placeholder will surface in body`,
+          );
+        }
+        return [];
+      }
+      const { media, downloadedBytes } = await resolveFeishuReferencedMessageMedia({
+        cfg,
+        messageId: messageInfo.messageId || fallbackMessageId || "",
+        messageType: messageInfo.contentType,
+        mediaKeys,
+        maxBytes: mediaMaxBytes,
+        log,
+        accountId: account.accountId,
+        label,
+      });
+      historyMediaBudgetUsed += downloadedBytes;
+      if (media.length > 0) {
+        mediaList.push(...media);
+      }
+      return media;
+    };
+
     const audioTranscript = await resolveFeishuAudioPreflightTranscript({
       cfg: effectiveCfg,
       mediaList,
@@ -1080,6 +1139,13 @@ export async function handleFeishuMessage(params: {
           log(
             `feishu[${account.accountId}]: fetched quoted message: ${quotedContent?.slice(0, 100)}`,
           );
+          if (quotedMessageInfo.mediaKeys) {
+            await tryDownloadReferencedMessageMedia({
+              messageInfo: quotedMessageInfo,
+              fallbackMessageId: quotedMessageId,
+              label: "quoted",
+            });
+          }
         } else if (quotedMessageInfo) {
           log(
             `feishu[${account.accountId}]: skipped quoted message from sender ${quotedMessageInfo.senderId ?? "unknown"} (mode=${contextVisibilityMode})`,
@@ -1196,6 +1262,19 @@ export async function handleFeishuMessage(params: {
             `feishu[${account.accountId}]: skipped thread starter from sender ${rootMessageInfo.senderId ?? "unknown"} (mode=${contextVisibilityMode})`,
           );
           rootMessageInfo = null;
+        } else if (
+          rootMessageInfo?.mediaKeys &&
+          // Avoid double-downloading when the root message is also the quoted
+          // target — its media has already been pulled into mediaList above.
+          // The per-key cache would also short-circuit it, but skipping early
+          // keeps logs clean.
+          ctx.rootId !== quotedMessageId
+        ) {
+          await tryDownloadReferencedMessageMedia({
+            messageInfo: rootMessageInfo,
+            fallbackMessageId: ctx.rootId,
+            label: "root",
+          });
         }
       }
       return rootMessageInfo ?? null;
@@ -1299,6 +1378,22 @@ export async function handleFeishuMessage(params: {
         const historyMessages = includeStarterInHistory
           ? relevantMessages
           : relevantMessages.slice(1);
+
+        // Pull attachments from history messages so the agent can answer
+        // questions about earlier images/files in the topic. Sequential, with
+        // a per-turn byte budget enforced by tryDownloadReferencedMessageMedia
+        // and a process-wide per-key cache so a hot topic doesn't pay the
+        // download cost more than once per attachment per process.
+        for (const msg of historyMessages) {
+          if (!msg.mediaKeys) {
+            continue;
+          }
+          await tryDownloadReferencedMessageMedia({
+            messageInfo: msg,
+            label: "thread-history",
+          });
+        }
+
         const historyParts = historyMessages.map((msg) => {
           const role = msg.senderType === "app" ? "assistant" : "user";
           return core.channel.reply.formatAgentEnvelope({
@@ -1333,6 +1428,10 @@ export async function handleFeishuMessage(params: {
     ) => {
       const groupName = await resolveGroupNameForLabel();
       const threadContext = await resolveThreadContextForAgent(agentId, agentSessionKey, groupName);
+      // Build the media payload after thread/root resolution so attachments
+      // pulled from quoted/root messages flow into MediaPaths alongside the
+      // current inbound media.
+      const mediaPayload = buildAgentMediaPayload(mediaList);
       return core.channel.reply.finalizeInboundContext({
         Body: combinedBody,
         BodyForAgent: messageBody,

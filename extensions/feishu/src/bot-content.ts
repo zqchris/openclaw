@@ -5,7 +5,7 @@ import { downloadMessageResourceFeishu } from "./media.js";
 import { isFeishuBroadcastMention } from "./mention.js";
 import { parsePostContent } from "./post.js";
 import { getFeishuRuntime } from "./runtime.js";
-import type { FeishuChatType, FeishuMediaInfo } from "./types.js";
+import type { FeishuChatType, FeishuMediaInfo, FeishuMessageMediaKeys } from "./types.js";
 
 type FeishuMention = {
   key: string;
@@ -148,7 +148,7 @@ export function parseMessageContent(content: string, messageType: string): strin
           return speechToText;
         }
       }
-      const placeholder = inferPlaceholder(messageType);
+      const placeholder = inferFeishuMediaPlaceholder(messageType);
       const fileName = typeof parsed.file_name === "string" ? parsed.file_name.trim() : "";
       return fileName ? `${placeholder} (${fileName})` : placeholder;
     }
@@ -299,7 +299,7 @@ export function normalizeFeishuCommandProbeBody(text: string): string {
     .trim();
 }
 
-function parseMediaKeys(
+export function parseFeishuMediaKeys(
   content: string,
   messageType: string,
 ): { imageKey?: string; fileKey?: string; fileName?: string } {
@@ -329,7 +329,7 @@ export function toMessageResourceType(messageType: string): "image" | "file" {
   return messageType === "image" ? "image" : "file";
 }
 
-function inferPlaceholder(messageType: string): string {
+export function inferFeishuMediaPlaceholder(messageType: string): string {
   switch (messageType) {
     case "image":
       return "<media:image>";
@@ -435,7 +435,7 @@ export async function resolveFeishuMediaList(params: {
     return out;
   }
 
-  const mediaKeys = parseMediaKeys(content, messageType);
+  const mediaKeys = parseFeishuMediaKeys(content, messageType);
   if (!mediaKeys.imageKey && !mediaKeys.fileKey) {
     return [];
   }
@@ -464,11 +464,137 @@ export async function resolveFeishuMediaList(params: {
     out.push({
       path: saved.path,
       contentType: saved.contentType,
-      placeholder: inferPlaceholder(messageType),
+      placeholder: inferFeishuMediaPlaceholder(messageType),
     });
     log?.(`feishu: downloaded ${messageType} media, saved to ${saved.path}`);
   } catch (err) {
     log?.(`feishu: failed to download ${messageType} media: ${String(err)}`);
   }
   return out;
+}
+
+/**
+ * Process-wide cache for already-resolved referenced-message attachments. Keyed
+ * by `${accountId}:${imageKey|fileKey}` so the same Feishu resource downloaded
+ * for one inbound message is reused when another inbound's quoted/root/thread
+ * history references it again.
+ *
+ * Why this exists: long-running monitoring scenarios re-read the same topic
+ * history on every new message in the topic. Without a per-key cache an active
+ * 20-message thread re-downloads every prior attachment for every new message
+ * (O(n²) per topic) and quickly approaches per-turn byte budgets / Feishu API
+ * rate limits.
+ *
+ * Scope: in-process only. Process restart re-warms the cache; that is fine —
+ * downloads on a fresh process are bounded by the per-turn budget and resumed
+ * naturally as new messages arrive. We do not negative-cache failures because
+ * those are typically transient (token refresh, transient 5xx).
+ *
+ * Bounded with a simple FIFO/LRU. Cap is generous because each entry is just
+ * a small object holding a string path; 1000 entries ≈ a few hundred KB.
+ */
+const REFERENCED_MEDIA_CACHE_MAX_ENTRIES = 1000;
+const referencedMediaCache = new Map<string, FeishuMediaInfo>();
+
+function rememberReferencedMedia(key: string, value: FeishuMediaInfo): void {
+  if (referencedMediaCache.has(key)) {
+    referencedMediaCache.delete(key);
+  } else if (referencedMediaCache.size >= REFERENCED_MEDIA_CACHE_MAX_ENTRIES) {
+    const oldest = referencedMediaCache.keys().next().value;
+    if (oldest !== undefined) {
+      referencedMediaCache.delete(oldest);
+    }
+  }
+  referencedMediaCache.set(key, value);
+}
+
+function recallReferencedMedia(key: string): FeishuMediaInfo | undefined {
+  const cached = referencedMediaCache.get(key);
+  if (cached) {
+    referencedMediaCache.delete(key);
+    referencedMediaCache.set(key, cached);
+  }
+  return cached;
+}
+
+/** Test-only: drop all cached referenced-media entries. */
+export function _clearFeishuReferencedMediaCacheForTests(): void {
+  referencedMediaCache.clear();
+}
+
+/**
+ * Resolve attachments from a referenced (quoted/root/history) message into
+ * FeishuMediaInfo entries. The Feishu file resource API requires the
+ * message_id of the message that owns the resource, so callers must pass the
+ * referenced message's id, not the inbound message's id.
+ *
+ * Used to pull image/file attachments from quoted/root/topic-history messages
+ * into the agent's MediaPaths so an inbound that references earlier media is
+ * answered from the actual bytes instead of a `<media:*>` placeholder.
+ *
+ * Caching: results are memoized per `(accountId, image_key|file_key)`. A repeat
+ * call with the same key returns the previously saved media without hitting
+ * the Feishu API or rewriting the on-disk buffer.
+ *
+ * If `budget` is provided, returns `{ media, downloadedBytes }` so callers can
+ * track per-turn download cost. Cache hits report `downloadedBytes: 0`.
+ */
+export async function resolveFeishuReferencedMessageMedia(params: {
+  cfg: ClawdbotConfig;
+  messageId: string;
+  messageType: string;
+  mediaKeys: FeishuMessageMediaKeys;
+  maxBytes: number;
+  log?: (msg: string) => void;
+  accountId?: string;
+  label?: string;
+}): Promise<{ media: FeishuMediaInfo[]; downloadedBytes: number }> {
+  const { cfg, messageId, messageType, mediaKeys, maxBytes, log, accountId, label } = params;
+  const fileKey = mediaKeys.fileKey || mediaKeys.imageKey;
+  if (!fileKey) {
+    return { media: [], downloadedBytes: 0 };
+  }
+  const labelPrefix = label ? `${label} ` : "";
+  const cacheKey = `${accountId ?? "default"}:${fileKey}`;
+  const cached = recallReferencedMedia(cacheKey);
+  if (cached) {
+    log?.(
+      `feishu: reused cached ${labelPrefix}${messageType} media for key=${fileKey} -> ${cached.path}`,
+    );
+    return { media: [cached], downloadedBytes: 0 };
+  }
+  try {
+    const result = await downloadMessageResourceFeishu({
+      cfg,
+      messageId,
+      fileKey,
+      type: toMessageResourceType(messageType),
+      accountId,
+    });
+    const core = getFeishuRuntime();
+    const contentType =
+      result.contentType ?? (await core.media.detectMime({ buffer: result.buffer }));
+    const saved = await core.channel.media.saveMediaBuffer(
+      result.buffer,
+      contentType,
+      "inbound",
+      maxBytes,
+      result.fileName || mediaKeys.fileName,
+    );
+    const info: FeishuMediaInfo = {
+      path: saved.path,
+      contentType: saved.contentType,
+      placeholder: inferFeishuMediaPlaceholder(messageType),
+    };
+    rememberReferencedMedia(cacheKey, info);
+    log?.(
+      `feishu: downloaded ${labelPrefix}${messageType} media for message=${messageId}, saved to ${saved.path} (${result.buffer.byteLength}B)`,
+    );
+    return { media: [info], downloadedBytes: result.buffer.byteLength };
+  } catch (err) {
+    log?.(
+      `feishu: failed to download ${labelPrefix}${messageType} media for message=${messageId}: ${String(err)}`,
+    );
+    return { media: [], downloadedBytes: 0 };
+  }
 }
