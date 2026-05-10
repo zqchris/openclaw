@@ -31,11 +31,14 @@ export function formatToolAggregate(
   if (!filtered.length) {
     return `${display.emoji} ${display.label}`;
   }
+  // Dedupe upfront — repeated metas (e.g. agent calling memory_search with the
+  // same query twice) carry no extra signal and just eat the line budget.
+  const deduped = Array.from(new Set(filtered));
 
   const rawSegments: string[] = [];
   // Group by directory and brace-collapse filenames
   const grouped: Record<string, string[]> = {};
-  for (const m of filtered) {
+  for (const m of deduped) {
     if (!isPathLike(m)) {
       rawSegments.push(m);
       continue;
@@ -60,18 +63,61 @@ export function formatToolAggregate(
     }
   }
 
-  const segments = Object.entries(grouped).map(([dir, files]) => {
-    const brace = files.length > 1 ? `{${files.join(", ")}}` : files[0];
+  const pathSegments = Object.entries(grouped).map(([dir, files]) => {
+    const uniqueFiles = Array.from(new Set(files));
+    const brace = uniqueFiles.length > 1 ? `{${uniqueFiles.join(", ")}}` : uniqueFiles[0];
     if (dir === ".") {
       return brace;
     }
     return `${dir}/${brace}`;
   });
 
-  const allSegments = [...rawSegments, ...segments];
+  const rawCollapsed = collapseByCommonAffix(rawSegments);
+  const allSegments = rawCollapsed ? [rawCollapsed, ...pathSegments] : pathSegments;
   const meta = allSegments.join("; ");
   const formattedMeta = formatMetaForDisplay(toolName, meta, options?.markdown);
   return compactCommandSummary ? `${prefix} ${formattedMeta}` : `${prefix}: ${formattedMeta}`;
+}
+
+// Brace-collapse 2+ non-path metas via the longest shared prefix/suffix:
+// `cmd1, cmd2, cmd3` → `cmd{1, 2, 3}`, `git diff foo.ts, git diff bar.ts` →
+// `git diff {foo, bar}.ts`. Falls back to `;`-join when affixes save < 2
+// chars or one meta is a strict affix-of-another (which would produce an
+// ambiguous `{a, , b}` brace).
+function collapseByCommonAffix(metas: string[]): string | undefined {
+  if (metas.length === 0) return undefined;
+  if (metas.length === 1) return metas[0];
+
+  let prefix = "";
+  for (let i = 0; i < metas[0].length; i++) {
+    const ch = metas[0][i];
+    if (metas.every((s) => s[i] === ch)) {
+      prefix += ch;
+    } else {
+      break;
+    }
+  }
+
+  let suffix = "";
+  const maxSuffixLen = Math.min(...metas.map((s) => s.length - prefix.length));
+  for (let i = 1; i <= maxSuffixLen; i++) {
+    const ch = metas[0][metas[0].length - i];
+    if (metas.every((s) => s[s.length - i] === ch)) {
+      suffix = ch + suffix;
+    } else {
+      break;
+    }
+  }
+
+  if (prefix.length + suffix.length < 2) {
+    return metas.join("; ");
+  }
+
+  const middles = metas.map((s) => s.slice(prefix.length, s.length - suffix.length));
+  if (middles.some((m) => !m)) {
+    return metas.join("; ");
+  }
+  return `${prefix}{${middles.join(", ")}}${suffix}`;
 }
 
 export function formatToolPrefix(toolName?: string, meta?: string) {

@@ -58,6 +58,36 @@ describe("tool meta formatting", () => {
     expect(out).toBe("🛠️ elevated · `cd ~/dir && gemini 2>&1`");
   });
 
+  it("dedupes identical metas before joining", () => {
+    expect(formatToolAggregate("memory_search", ["foo", "foo", "foo"])).toBe(
+      "🧠 Memory Search: foo",
+    );
+  });
+
+  it("brace-collapses non-path metas with a meaningful common prefix", () => {
+    const out = formatToolAggregate("exec", ["cmd1", "cmd2", "cmd3", "cmd4", "cmd5"]);
+    expect(out).toBe("🛠️ Exec: cmd{1, 2, 3, 4, 5}");
+  });
+
+  it("brace-collapses non-path metas with both common prefix and suffix", () => {
+    const out = formatToolAggregate("exec", ["git diff foo.ts", "git diff bar.ts"]);
+    expect(out).toBe("🛠️ Exec: git diff {foo, bar}.ts");
+  });
+
+  it("dedupes then collapses when only common prefix exists", () => {
+    const out = formatToolAggregate("memory_search", [
+      "Filo Agents Actions",
+      "Filo design agent mode",
+      "Filo Agents Actions",
+    ]);
+    expect(out).toBe("🧠 Memory Search: Filo {Agents Actions, design agent mode}");
+  });
+
+  it("falls back to ; join when prefix/suffix savings are not meaningful", () => {
+    const out = formatToolAggregate("exec", ["ls", "pwd", "date"]);
+    expect(out).toBe("🛠️ Exec: ls; pwd; date");
+  });
+
   it("formats prefixes with default labels", () => {
     vi.stubEnv("HOME", home);
     expect(formatToolPrefix(undefined, undefined)).toBe("🧩 Tool");

@@ -471,8 +471,9 @@ describe("channel-streaming", () => {
       const out = formatChannelProgressDraftText({ entry, lines: tenExecs });
       const lines = toolLines(out);
       expect(lines.length).toBe(1);
-      expect(lines[0]).toContain("cmd1");
-      expect(lines[0]).toContain("cmd10");
+      // Smart-collapse extracts the "cmd" common prefix and brace-enumerates
+      // the varying suffixes — cmd1...cmd10 become cmd{1, 2, ..., 10}.
+      expect(lines[0]).toMatch(/cmd\{.*\b1\b.*\b10\b.*\}/);
     });
 
     it("does not merge runs of different tools", () => {
@@ -487,8 +488,8 @@ describe("channel-streaming", () => {
       const out = formatChannelProgressDraftText({ entry, lines });
       const tl = toolLines(out);
       expect(tl.length).toBe(3);
-      expect(tl[0]).toMatch(/cmdA/);
-      expect(tl[0]).toMatch(/cmdB/);
+      // Within a same-tool run, smart-collapse braces around varying suffix.
+      expect(tl[0]).toMatch(/cmd\{A, B\}/);
       expect(tl[1]).toMatch(/foo/);
       expect(tl[1]).toMatch(/bar/);
       expect(tl[2]).toMatch(/cmdC/);
