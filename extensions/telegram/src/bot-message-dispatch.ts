@@ -364,9 +364,8 @@ function sanitizeProgressMarkdownText(text: string): string {
   return text.replaceAll("`", "'");
 }
 
-function formatProgressAsMarkdownCode(text: string): string {
-  const clipped = clipProgressMarkdownText(text);
-  return `\`${sanitizeProgressMarkdownText(clipped)}\``;
+function formatProgressLine(text: string): string {
+  return clipProgressMarkdownText(text);
 }
 
 export const dispatchTelegramMessage = async ({
@@ -619,7 +618,7 @@ export const dispatchTelegramMessage = async ({
       entry: telegramCfg,
       lines: streamToolProgressLines,
       seed: progressSeed,
-      formatLine: formatProgressAsMarkdownCode,
+      formatLine: formatProgressLine,
     });
     if (!streamText || streamText === answerLane.lastPartialText) {
       return;
@@ -670,7 +669,7 @@ export const dispatchTelegramMessage = async ({
         entry: telegramCfg,
         lines: streamToolProgressLines,
         seed: progressSeed,
-        formatLine: formatProgressAsMarkdownCode,
+        formatLine: formatProgressLine,
       });
       await prepareAnswerLaneForToolProgress();
       answerLane.lastPartialText = streamText;

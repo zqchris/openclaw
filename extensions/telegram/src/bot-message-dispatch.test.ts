@@ -1132,7 +1132,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
 
     expect(answerDraftStream.update).toHaveBeenNthCalledWith(
       1,
-      expect.stringMatching(/`🛠️ Exec`$/),
+      expect.stringMatching(/🛠️ Exec$/),
     );
     expect(answerDraftStream.update).toHaveBeenNthCalledWith(2, "Branch is up to date");
     expect(answerDraftStream.forceNewMessage).toHaveBeenCalledTimes(1);
@@ -1183,7 +1183,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
     });
 
     expect(answerDraftStream.update).toHaveBeenCalledWith(
-      "Cracking...\n`🛠️ Exec`\n`🛠️ git rev-parse --abbrev-ref HEAD`",
+      "Cracking...\n🛠️ Exec\n🛠️ git rev-parse --abbrev-ref HEAD",
     );
     expect(answerDraftStream.update).not.toHaveBeenCalledWith("Branch is up to date");
     expect(answerDraftStream.forceNewMessage).toHaveBeenCalledTimes(1);
@@ -1247,7 +1247,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
       telegramCfg: { streaming: { mode: "progress", progress: { label: "Shelling" } } },
     });
 
-    expect(draftStream.update).toHaveBeenCalledWith("Shelling\n`🛠️ Exec`");
+    expect(draftStream.update).toHaveBeenCalledWith("Shelling\n🛠️ Exec");
     expect(draftStream.flush).toHaveBeenCalled();
   });
 
@@ -1269,7 +1269,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
       const updateBeforeStatusReaction = draftStream.update.mock.calls.at(-1)?.[0];
       releaseSetTool?.();
       await pendingToolStart;
-      expect(updateBeforeStatusReaction).toMatch(/^Shelling\n`🛠️ Exec`$/);
+      expect(updateBeforeStatusReaction).toMatch(/^Shelling\n🛠️ Exec$/);
       return { queuedFinal: false };
     });
 
@@ -1306,7 +1306,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
     });
 
     expect(draftStream.update).toHaveBeenCalledWith(
-      "Shelling\n`🔎 Web Search: docs lookup`\n• `tests passed`",
+      "Shelling\n🔎 Web Search: docs lookup\n• tests passed",
     );
     expect(draftStream.forceNewMessage).toHaveBeenCalledTimes(1);
     expect(draftStream.materialize).not.toHaveBeenCalled();
