@@ -1,3 +1,4 @@
+import { parseThreadSessionSuffix } from "../sessions/session-key-utils.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 
 export type SilentReplyPolicy = "allow" | "disallow";
@@ -26,6 +27,15 @@ export function classifySilentReplyConversationType(params: {
   }
   if (normalizedSessionKey.includes(":direct:") || normalizedSessionKey.includes(":dm:")) {
     return "direct";
+  }
+  // Treat generic thread suffixes as internal only after concrete channel
+  // group/direct markers have had a chance to classify the conversation. This
+  // keeps channel thread sessions such as `...:direct:<id>:thread:<topic>` from
+  // suppressing direct-chat silent-reply rewrites, while still classifying
+  // internal main/subagent/ACP thread sessions as internal.
+  const { threadId } = parseThreadSessionSuffix(params.sessionKey);
+  if (threadId) {
+    return "internal";
   }
   const normalizedSurface = normalizeLowercaseStringOrEmpty(params.surface);
   if (normalizedSurface === "webchat") {

@@ -28,6 +28,27 @@ describe("classifySilentReplyConversationType", () => {
     ).toBe("group");
   });
 
+  it("keeps channel thread sessions on their concrete direct/group type", () => {
+    expect(
+      classifySilentReplyConversationType({
+        sessionKey: "agent:main:telegram:direct:123:thread:99",
+      }),
+    ).toBe("direct");
+    expect(
+      classifySilentReplyConversationType({
+        sessionKey: "agent:main:discord:channel:123:thread:456",
+      }),
+    ).toBe("group");
+  });
+
+  it("classifies generic main thread sessions as internal", () => {
+    expect(
+      classifySilentReplyConversationType({
+        sessionKey: "agent:main:main:thread:99",
+      }),
+    ).toBe("internal");
+  });
+
   it("treats webchat as direct by default and unknown surfaces as internal", () => {
     expect(classifySilentReplyConversationType({ surface: "webchat" })).toBe("direct");
     expect(classifySilentReplyConversationType({ surface: "subagent" })).toBe("internal");
