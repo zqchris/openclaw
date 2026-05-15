@@ -8,6 +8,7 @@ Skills own workflows; root owns hard policy and routing.
 - Repo: `https://github.com/openclaw/openclaw`
 - Replies: repo-root refs only: `extensions/telegram/src/index.ts:80`. No absolute paths, no `~/`.
 - Docs/user-visible work: `pnpm docs:list`, then read relevant docs only.
+- `patch/chris` upstream/rebase/runtime work: read `.agents/runbooks/patch-chris-upstream.md` before broad Git diff/fetch decisions.
 - Fix/triage answers need source, tests, current/shipped behavior, and dependency contract proof.
 - Dependency-backed behavior: read upstream docs/source/types first. No API/default/error/timing guesses.
 - Live-verify when feasible. Never print secrets.
