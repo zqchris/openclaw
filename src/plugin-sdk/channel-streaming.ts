@@ -854,25 +854,26 @@ export function formatChannelProgressDraftText(params: {
   const formatLine = params.formatLine ?? ((line: string) => line);
   const bullet = params.bullet ?? "•";
   const collapsedLines = collapseConsecutiveSameToolLines(params.lines);
-  const rawLines: Array<string | ChannelProgressDraftLine | { draftLabel: string }> = label
-    ? [{ draftLabel: label }, ...collapsedLines]
-    : collapsedLines;
-  const lines = rawLines
+  const labelText = label
+    ? compactChannelProgressDraftLine(label, DEFAULT_PROGRESS_DRAFT_MAX_LINE_CHARS)
+    : "";
+  const hasStructuredProgressLine = collapsedLines.some((line) => typeof line !== "string");
+  const progressLines = collapsedLines
     .map((line) => {
-      const isLabelLine = typeof line === "object" && line !== null && "draftLabel" in line;
-      const rawText = isLabelLine
-        ? line.draftLabel
-        : typeof line === "string"
-          ? line
-          : getProgressDraftLineText(line);
+      const rawText = typeof line === "string" ? line : getProgressDraftLineText(line);
       const text = compactChannelProgressDraftLine(rawText, DEFAULT_PROGRESS_DRAFT_MAX_LINE_CHARS);
-      return text ? { text, isLabelLine } : undefined;
+      return text ? { text, isLabelLine: false } : undefined;
     })
-    .filter((line): line is { text: string; isLabelLine: boolean } => Boolean(line))
-    .slice(-maxLines)
-    .map(({ text, isLabelLine }) => {
-      const formatted = isLabelLine ? text : formatLine(text);
-      return !isLabelLine && shouldPrefixProgressLine(text) ? `${bullet} ${formatted}` : formatted;
-    });
+    .filter((line): line is { text: string; isLabelLine: boolean } => Boolean(line));
+  const cappedProgressLines = progressLines.slice(-maxLines);
+  const shouldIncludeLabel =
+    Boolean(labelText) && (hasStructuredProgressLine || progressLines.length < maxLines);
+  const lines = [
+    ...(shouldIncludeLabel ? [{ text: labelText, isLabelLine: true }] : []),
+    ...cappedProgressLines,
+  ].map(({ text, isLabelLine }) => {
+    const formatted = isLabelLine ? text : formatLine(text);
+    return !isLabelLine && shouldPrefixProgressLine(text) ? `${bullet} ${formatted}` : formatted;
+  });
   return lines.filter((line): line is string => Boolean(line)).join("\n");
 }

@@ -1130,10 +1130,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
 
     await dispatchWithContext({ context: createContext() });
 
-    expect(answerDraftStream.update).toHaveBeenNthCalledWith(
-      1,
-      expect.stringMatching(/🛠️ Exec$/),
-    );
+    expect(answerDraftStream.update).toHaveBeenNthCalledWith(1, expect.stringMatching(/🛠️ Exec$/));
     expect(answerDraftStream.update).toHaveBeenNthCalledWith(2, "Branch is up to date");
     expect(answerDraftStream.forceNewMessage).toHaveBeenCalledTimes(1);
     expect(answerDraftStream.clear).not.toHaveBeenCalled();

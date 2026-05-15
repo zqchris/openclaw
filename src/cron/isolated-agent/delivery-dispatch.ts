@@ -101,23 +101,22 @@ export function resolveCronDeliveryBestEffort(job: CronJob): boolean {
 }
 
 /**
- * Build a transcript mirror spec for BlueBubbles cron deliveries so the
+ * Build a transcript mirror spec for iMessage cron deliveries so the
  * target channel's session records what cron pushed. Without this mirror,
- * when a BlueBubbles recipient replies in plain text (no iMessage
- * reply-quote, which is how most people use BB groups), the agent sees an
- * orphan user message with no prior assistant turn and has to guess or
- * hallucinate the context.
+ * when an iMessage recipient replies in plain text without a native reply
+ * quote, the agent sees an orphan user message with no prior assistant turn
+ * and has to guess the context.
  *
- * Scope: BlueBubbles only. Other channels return undefined — callers keep
+ * Scope: iMessage only. Other channels return undefined — callers keep
  * the previous behavior of not mirroring cron output.
  *
  * The target session route is delegated to the shared outbound session
- * resolver, which lets the BlueBubbles plugin normalize chat_guid DM/group
+ * resolver, which lets the iMessage plugin normalize chat_guid DM/group
  * shapes exactly like normal outbound sends and inbound replies do.
  * Guarded best-effort: route resolution failures return undefined so the
  * delivery itself is never blocked.
  */
-async function buildBluebubblesCronMirror(params: {
+async function buildImessageCronMirror(params: {
   cfg: OpenClawConfig;
   agentId: string;
   delivery: { channel: string; to: string; accountId?: string };
@@ -135,7 +134,7 @@ async function buildBluebubblesCronMirror(params: {
   | undefined
 > {
   const channel = normalizeLowercaseStringOrEmpty(params.delivery.channel);
-  if (channel !== "bluebubbles") {
+  if (channel !== "imessage") {
     return undefined;
   }
   const to = normalizeOptionalString(params.delivery.to);
@@ -152,7 +151,7 @@ async function buildBluebubblesCronMirror(params: {
   try {
     const route = await resolveOutboundSessionRoute({
       cfg: params.cfg,
-      channel: "bluebubbles",
+      channel: "imessage",
       agentId: params.agentId,
       accountId: params.delivery.accountId ?? null,
       target: to,
@@ -732,15 +731,15 @@ export async function dispatchCronDelivery(
       // cron pushes are invisible to the agent: on reply it sees an orphan
       // user message with no prior assistant turn explaining what was sent.
       //
-      // Scoped to BlueBubbles only — the family group chat is where this
-      // matters because recipients rarely use iMessage reply-quote, so
-      // context cannot be reconstructed from the reply itself. Other
-      // channels leave mirror unset and keep current behavior.
+      // Scoped to iMessage only — the family group chat is where this matters
+      // because recipients rarely use native reply-quote, so context cannot be
+      // reconstructed from the reply itself. Other channels leave mirror unset
+      // and keep current behavior.
       //
-      // The shared outbound session resolver normalizes BlueBubbles target
+      // The shared outbound session resolver normalizes iMessage target
       // shapes the same way normal outbound sends do, so chat_guid DMs and
       // groups land in the same transcript that later replies will use.
-      const bluebubblesMirror = await buildBluebubblesCronMirror({
+      const imessageMirror = await buildImessageCronMirror({
         cfg: params.cfgWithAgentDefaults,
         agentId: params.agentId,
         delivery: {
@@ -779,7 +778,7 @@ export async function dispatchCronDelivery(
           deps: createOutboundSendDeps(params.deps),
           signal: params.abortSignal,
           onError,
-          ...(bluebubblesMirror ? { mirror: bluebubblesMirror } : {}),
+          ...(imessageMirror ? { mirror: imessageMirror } : {}),
           // Isolated cron direct delivery uses its own transient retry loop.
           // Keep all attempts out of the write-ahead delivery queue so a
           // late-successful first send cannot leave behind a failed queue

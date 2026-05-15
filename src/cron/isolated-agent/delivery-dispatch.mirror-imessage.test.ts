@@ -1,21 +1,24 @@
 /**
- * Tests for BlueBubbles cron transcript mirror.
+ * Tests for iMessage cron transcript mirror.
  *
  * Context: cron deliveries historically did not write anything to the target
- * channel's session transcript, so when a BlueBubbles recipient replied in
- * plain text (no iMessage reply-quote, which is how most people use BB
- * groups), the agent saw an orphan user message and could not reconstruct
- * what cron had pushed earlier.
+ * channel's session transcript, so when an iMessage recipient replied in
+ * plain text without a native reply quote, the agent saw an orphan user
+ * message and could not reconstruct what cron had pushed earlier.
  *
- * Fix: when cron delivers to channel=bluebubbles, set `mirror` on the
+ * Fix: when cron delivers to channel=imessage, set `mirror` on the
  * outbound delivery so deliver.ts appends the payload text to the target
- * session transcript. Scope limited to bluebubbles — other channels keep
+ * session transcript. Scope limited to imessage — other channels keep
  * the previous no-mirror behavior.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Module mocks (must be hoisted before imports) ---
+
+const sendDurableMessageBatch = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ status: "sent", results: [{ ok: true }] }),
+);
 
 vi.mock("../../config/sessions.js", () => ({
   resolveAgentMainSessionKey: vi.fn(({ agentId }: { agentId: string }) => `agent:${agentId}:main`),
@@ -28,6 +31,13 @@ vi.mock("../../agents/subagent-registry-read.js", () => ({
 
 vi.mock("../../infra/outbound/deliver.js", () => ({
   deliverOutboundPayloads: vi.fn().mockResolvedValue([{ ok: true }]),
+}));
+
+vi.mock("./delivery-outbound.runtime.js", () => ({
+  buildOutboundSessionContext: vi.fn().mockReturnValue({}),
+  createOutboundSendDeps: vi.fn().mockReturnValue({}),
+  resolveAgentOutboundIdentity: vi.fn().mockReturnValue({}),
+  sendDurableMessageBatch,
 }));
 
 vi.mock("../../infra/outbound/identity.js", () => ({
@@ -64,17 +74,17 @@ vi.mock("../../infra/outbound/outbound-session.js", () => ({
           baseSessionKey: `agent:${agentId}:direct:+15551234567`,
           peer: { kind: "direct", id: "+15551234567" },
           chatType: "direct",
-          from: "bluebubbles:+15551234567",
-          to: `bluebubbles:${target}`,
+          from: "imessage:+15551234567",
+          to: `imessage:${target}`,
         };
       }
       return {
-        sessionKey: `agent:${agentId}:bluebubbles:group:imessage;+;test-group-guid`,
-        baseSessionKey: `agent:${agentId}:bluebubbles:group:imessage;+;test-group-guid`,
+        sessionKey: `agent:${agentId}:imessage:group:imessage;+;test-group-guid`,
+        baseSessionKey: `agent:${agentId}:imessage:group:imessage;+;test-group-guid`,
         peer: { kind: "group", id: "iMessage;+;test-group-guid" },
         chatType: "group",
         from: "group:iMessage;+;test-group-guid",
-        to: `bluebubbles:${target}`,
+        to: `imessage:${target}`,
       };
     },
   ),
@@ -91,7 +101,6 @@ vi.mock("./subagent-followup.runtime.js", () => ({
 }));
 
 // Import after mocks
-import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import { resolveOutboundSessionRoute } from "../../infra/outbound/outbound-session.js";
 import {
   dispatchCronDelivery,
@@ -104,10 +113,10 @@ import type { RunCronAgentTurnResult } from "./run.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeBluebubblesDelivery(): Extract<DeliveryTargetResolution, { ok: true }> {
+function makeImessageDelivery(): Extract<DeliveryTargetResolution, { ok: true }> {
   return {
     ok: true,
-    channel: "bluebubbles",
+    channel: "imessage",
     to: "chat_guid:iMessage;+;test-group-guid",
     accountId: "default",
     threadId: undefined,
@@ -115,10 +124,10 @@ function makeBluebubblesDelivery(): Extract<DeliveryTargetResolution, { ok: true
   };
 }
 
-function makeBluebubblesDirectDelivery(): Extract<DeliveryTargetResolution, { ok: true }> {
+function makeImessageDirectDelivery(): Extract<DeliveryTargetResolution, { ok: true }> {
   return {
     ok: true,
-    channel: "bluebubbles",
+    channel: "imessage",
     to: "chat_guid:iMessage;-;+15551234567",
     accountId: "default",
     threadId: undefined,
@@ -190,7 +199,7 @@ function makeBaseParams(overrides: {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("dispatchCronDelivery — BlueBubbles transcript mirror", () => {
+describe("dispatchCronDelivery - iMessage transcript mirror", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetCompletedDirectCronDeliveriesForTests();
@@ -201,18 +210,18 @@ describe("dispatchCronDelivery — BlueBubbles transcript mirror", () => {
     vi.unstubAllEnvs();
   });
 
-  it("BlueBubbles cron delivery includes a mirror with the group target session key", async () => {
+  it("iMessage cron delivery includes a mirror with the group target session key", async () => {
     const params = makeBaseParams({
-      resolvedDelivery: makeBluebubblesDelivery(),
+      resolvedDelivery: makeImessageDelivery(),
       synthesizedText: "Oura morning briefing: sleep 7h23m, readiness 88, HRV 45",
     });
     await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
-    const callArg = vi.mocked(deliverOutboundPayloads).mock.calls[0]?.[0];
+    expect(sendDurableMessageBatch).toHaveBeenCalledTimes(1);
+    const callArg = vi.mocked(sendDurableMessageBatch).mock.calls[0]?.[0];
     expect(callArg?.mirror).toBeDefined();
     expect(callArg?.mirror).toMatchObject({
-      sessionKey: "agent:main:bluebubbles:group:imessage;+;test-group-guid",
+      sessionKey: "agent:main:imessage:group:imessage;+;test-group-guid",
       agentId: "main",
       text: "Oura morning briefing: sleep 7h23m, readiness 88, HRV 45",
       isGroup: true,
@@ -224,14 +233,14 @@ describe("dispatchCronDelivery — BlueBubbles transcript mirror", () => {
     // channel to avoid asserting on the run-start timestamp embedded in the
     // execution id, which would couple the test to wall-clock state.
     expect(callArg?.mirror?.idempotencyKey).toContain("oura-daily");
-    expect(callArg?.mirror?.idempotencyKey).toContain("bluebubbles");
+    expect(callArg?.mirror?.idempotencyKey).toContain("imessage");
 
-    // The generic outbound session resolver lets the BlueBubbles plugin
+    // The generic outbound session resolver lets the iMessage plugin
     // normalize chat_guid targets before the mirror session key is chosen.
     expect(resolveOutboundSessionRoute).toHaveBeenCalledTimes(1);
     expect(resolveOutboundSessionRoute).toHaveBeenCalledWith(
       expect.objectContaining({
-        channel: "bluebubbles",
+        channel: "imessage",
         accountId: "default",
         agentId: "main",
         target: "chat_guid:iMessage;+;test-group-guid",
@@ -239,33 +248,33 @@ describe("dispatchCronDelivery — BlueBubbles transcript mirror", () => {
     );
   });
 
-  it("non-BlueBubbles cron delivery does not set mirror (unchanged behavior)", async () => {
+  it("non-iMessage cron delivery does not set mirror (unchanged behavior)", async () => {
     const params = makeBaseParams({
       resolvedDelivery: makeTelegramDelivery(),
       synthesizedText: "Telegram topic push",
     });
     await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
-    const callArg = vi.mocked(deliverOutboundPayloads).mock.calls[0]?.[0];
+    expect(sendDurableMessageBatch).toHaveBeenCalledTimes(1);
+    const callArg = vi.mocked(sendDurableMessageBatch).mock.calls[0]?.[0];
     expect(callArg?.mirror).toBeUndefined();
-    // The outbound session resolver must not be invoked for non-BB channels.
+    // The outbound session resolver must not be invoked for non-iMessage channels.
     expect(resolveOutboundSessionRoute).not.toHaveBeenCalled();
   });
 
-  it("BlueBubbles cron delivery routes a `;-;` DM target to a direct peer (no group session)", async () => {
+  it("iMessage cron delivery routes a `;-;` DM target to a direct peer (no group session)", async () => {
     // Regression for codex review P1: mirror routing must use the same
-    // BlueBubbles target normalization as regular outbound sends. A DM
+    // iMessage target normalization as regular outbound sends. A DM
     // chat_guid target (`;-;`) should land in the handle-shaped DM transcript,
     // not in a raw `chat_guid:...` session key that later replies never use.
     const params = makeBaseParams({
-      resolvedDelivery: makeBluebubblesDirectDelivery(),
+      resolvedDelivery: makeImessageDirectDelivery(),
       synthesizedText: "Direct reminder for one recipient",
     });
     await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
-    const callArg = vi.mocked(deliverOutboundPayloads).mock.calls[0]?.[0];
+    expect(sendDurableMessageBatch).toHaveBeenCalledTimes(1);
+    const callArg = vi.mocked(sendDurableMessageBatch).mock.calls[0]?.[0];
     expect(callArg?.mirror).toMatchObject({
       sessionKey: "agent:main:direct:+15551234567",
       isGroup: false,
@@ -278,41 +287,41 @@ describe("dispatchCronDelivery — BlueBubbles transcript mirror", () => {
     expect(resolveOutboundSessionRoute).toHaveBeenCalledTimes(1);
     expect(resolveOutboundSessionRoute).toHaveBeenCalledWith(
       expect.objectContaining({
-        channel: "bluebubbles",
+        channel: "imessage",
         target: "chat_guid:iMessage;-;+15551234567",
       }),
     );
   });
 
-  it("BlueBubbles mirror falls back gracefully when route resolution throws", async () => {
+  it("iMessage mirror falls back gracefully when route resolution throws", async () => {
     vi.mocked(resolveOutboundSessionRoute).mockImplementationOnce(() => {
       throw new Error("route resolution failed");
     });
     const params = makeBaseParams({
-      resolvedDelivery: makeBluebubblesDelivery(),
+      resolvedDelivery: makeImessageDelivery(),
       synthesizedText: "Fallback text",
     });
     await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
-    const callArg = vi.mocked(deliverOutboundPayloads).mock.calls[0]?.[0];
+    expect(sendDurableMessageBatch).toHaveBeenCalledTimes(1);
+    const callArg = vi.mocked(sendDurableMessageBatch).mock.calls[0]?.[0];
     // Mirror is omitted but delivery still proceeds.
     expect(callArg?.mirror).toBeUndefined();
-    expect(callArg?.channel).toBe("bluebubbles");
+    expect(callArg?.channel).toBe("imessage");
   });
 
   it("multiple payloads are concatenated into the mirror text", async () => {
     const params = {
       ...makeBaseParams({
-        resolvedDelivery: makeBluebubblesDelivery(),
+        resolvedDelivery: makeImessageDelivery(),
       }),
       deliveryPayloads: [{ text: "Briefing part 1" }, { text: "Briefing part 2" }],
       synthesizedText: "fallback",
     };
     await dispatchCronDelivery(params);
 
-    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
-    const callArg = vi.mocked(deliverOutboundPayloads).mock.calls[0]?.[0];
+    expect(sendDurableMessageBatch).toHaveBeenCalledTimes(1);
+    const callArg = vi.mocked(sendDurableMessageBatch).mock.calls[0]?.[0];
     expect(callArg?.mirror?.text).toBe("Briefing part 1\n\nBriefing part 2");
   });
 });

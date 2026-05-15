@@ -417,13 +417,11 @@ async function bridgeCodexHomeEntry(params: {
   return true;
 }
 
-async function prepareIsolatedCodexHome(
-  params: {
-    baseDir: string;
-    workspaceDir: string;
-    bridgeConfig: ResolvedAcpxPluginConfig["codexHomeBridge"];
-  },
-): Promise<string> {
+async function prepareIsolatedCodexHome(params: {
+  baseDir: string;
+  workspaceDir: string;
+  bridgeConfig: ResolvedAcpxPluginConfig["codexHomeBridge"];
+}): Promise<string> {
   const codexHome = path.join(params.baseDir, "codex-home");
   await fs.mkdir(codexHome, { recursive: true });
   const configPath = path.join(codexHome, "config.toml");
