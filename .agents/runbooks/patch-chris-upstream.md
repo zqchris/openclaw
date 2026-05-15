@@ -7,7 +7,8 @@ Purpose: keep `patch/chris` usable across machines while it carries a private pa
 1. Run `pnpm docs:list`.
 2. Read this file before Git diffing broad upstream history.
 3. Check `git status --short --branch`, remotes, current HEAD, `origin/patch/chris`, and available upstream release tags.
-4. Treat `.agents/local/PROJECT_NOTES.md` as machine-local context only. It is excluded locally and does not travel with this branch.
+4. Before recommending a target or runtime move, produce a user-facing upgrade decision checklist that compares the source version to each candidate target across all user-visible features, config defaults, channel/plugin capabilities, automation behavior, and repair/update changes.
+5. Treat `.agents/local/PROJECT_NOTES.md` as machine-local context only. It is excluded locally and does not travel with this branch.
 
 ## Operating model
 
@@ -33,13 +34,21 @@ Purpose: keep `patch/chris` usable across machines while it carries a private pa
 For each candidate target:
 
 1. Compare current base, target tag, and `patch/chris`.
-2. Group upstream changes by user-visible surface: Telegram, Feishu, Codex/ACP, gateway/session/runtime, doctor/update/config, plugin install, UI/status, and release/build-only.
-3. Mark each local patch as:
+2. Read the release notes, relevant docs, generated config metadata when needed, and source diffs for the full source-to-target version range. Do not narrow the assessment to the noisy migration or conflict of the day.
+3. Group upstream changes by user-visible surface: messaging channels, agents/model/runtime, Codex/ACP, gateway/session/runtime, cron/automation, memory, doctor/update/config repair, plugin install, UI/status, security/network, and release/build-only.
+4. For each user-visible feature/config/behavior change, record:
+   - what changed between the old and new version
+   - whether the current operator setup already has it enabled, disabled, or not configured
+   - the recommended action: keep, enable, disable, defer, or test with explicit operator approval
+   - the usage impact and rollback/risk note
+5. The recommendation checklist must cover "no action needed" items too. A change that needs no config still belongs in the checklist if it changes reliability, safety, delivery behavior, model/tool behavior, or operator workflow.
+6. Mark each local patch as:
    - keep: still needed and not upstreamed
    - drop: upstream has equivalent behavior
    - port: owner moved or target API changed
    - defer: not relevant to the chosen target
-4. Pay special attention to historical conflict areas: BlueBubbles route/cache behavior, Feishu topic/reply media, memory-core dreaming filters, ACPX/Codex home bridge, SSRF/network guards, auth-profile/status labels, silent-reply/session routing, and generated config baselines.
+7. Pay special attention to historical conflict areas: BlueBubbles route/cache behavior, Feishu topic/reply media, memory-core dreaming filters, ACPX/Codex home bridge, SSRF/network guards, auth-profile/status labels, silent-reply/session routing, and generated config baselines.
+8. Historical conflict areas are not the whole assessment. Do not let iMessage/BlueBubbles, or any single migration, crowd out Telegram, Feishu, Codex/ACP, cron, memory, doctor/update, plugin, security, UI/status, or build/release changes.
 
 ## Rebase sequence
 
