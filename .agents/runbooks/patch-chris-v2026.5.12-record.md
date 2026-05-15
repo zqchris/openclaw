@@ -107,7 +107,10 @@ Runtime health:
 
 Code validation gap:
 
-- This record does not contain a fresh Testbox `pnpm check:changed --base upstream/main` result captured after the final rebase/cutover commit. Do not treat the branch as fully release-gated until that is run or an explicit local fallback is recorded.
+- This record does not contain a fresh Testbox `pnpm check:changed --base upstream/main` result captured after the final rebase/cutover commit. The local `blacksmith` CLI was present but not authenticated, so Testbox could not be used from this machine without a login step.
+- `pnpm changed:lanes --base v2026.5.12 --json` selected 65 patch-stack paths with `core`, `coreTests`, `extensions`, `extensionTests`, and `docs` lanes.
+- `pnpm changed:lanes --base upstream/main --json` selected 638 paths and `all` lanes because moving `upstream/main` had advanced beyond the chosen release tag. For this release-tag patch stack, use the target tag diff to understand local patch risk, and use the `upstream/main` gate only when intentionally validating against moving main.
+- Do not treat the branch as fully release-gated until Testbox auth is available and a changed gate is run, or an explicit local fallback is recorded.
 
 Live behavior still requiring operator-approved sends:
 
