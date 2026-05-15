@@ -93,6 +93,10 @@ Checkpoint from 2026-05-15, before moving from BlueBubbles to the upstream `imes
 
 ## Push and record
 
+Post-rebase records:
+
+- `v2026.5.12`: `.agents/runbooks/patch-chris-v2026.5.12-record.md`
+
 Before push:
 
 1. Confirm worktree cleanliness and final HEAD.
