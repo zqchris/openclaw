@@ -74,6 +74,23 @@ Only after code validation:
 5. If `doctor --fix` is needed, inspect before/after config diff and record what changed.
 6. Verify the main Telegram session and any relevant ACP/Codex session after restart.
 
+## iMessage cutover notes
+
+Checkpoint from 2026-05-15, before moving from BlueBubbles to the upstream `imessage` plugin:
+
+- Latest checked release line: `v2026.5.12` stable and `v2026.5.14-beta.1` beta both carry the BlueBubbles removal path. At those refs `extensions/bluebubbles` is gone and `extensions/imessage` is the supported runtime.
+- Current `patch/chris` base before the cutover assessment was `v2026.5.7`; local patch stack still contains BlueBubbles-specific fixes and cron transcript mirroring patches. Treat those as drop/port candidates during a rebase, not as automatically reusable fixes.
+- The Mac mini relay host is reachable by SSH on the same LAN host used by the old BlueBubbles server. Do not rely on remote shell `PATH`: non-interactive SSH did not include Homebrew. Any OpenClaw `channels.imessage.cliPath` wrapper must call `/opt/homebrew/bin/imsg` or set `PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin`.
+- Mini `imsg` was verified over SSH with `/opt/homebrew/bin/imsg`: chat listing parsed as NDJSON, history reads parsed with attachments metadata shape, `watch --json` stayed up for a short idle window without stderr, and `status --json` reported Messages.app connected with advanced/private API features ready. A real send was intentionally not performed without an operator-specified target.
+- Mini `imsg` install was `0.8.1`; after Homebrew tap refresh, `steipete/tap/imsg` advertised `0.8.2` as current. If upgrading `imsg`, retest `status`, `chats`, `history`, `watch`, and one operator-approved send before changing OpenClaw traffic.
+- SIP on the mini was disabled and private API status was already ready. Do not run `imsg launch` casually: it kills and relaunches Messages.app. Use it only when `imsg status --json` or `openclaw channels status --probe --channel imessage` says the bridge is unavailable.
+- Current runtime config still routes `channels.bluebubbles`; the active BlueBubbles server responded on the mini. Keep it as the rollback observation path until iMessage DM, group, attachment, and action checks pass.
+- Translate behavior keys from `channels.bluebubbles` to `channels.imessage`: `dmPolicy`, `allowFrom`, `groupPolicy`, `groupAllowFrom`, `groups`, `actions`, attachment policy, `mediaMaxMb`, `textChunkLimit`, `blockStreaming`, and coalescing settings. Drop only transport keys such as `serverUrl`, `password`, and webhook path.
+- With `groupPolicy: "allowlist"`, the `groups` block is load-bearing. Copy it verbatim or add an explicit wildcard/per-chat entry; otherwise group traffic can be dropped even when `groupAllowFrom` passes.
+- Update persistent ACP/channel bindings from `match.channel: "bluebubbles"` to `"imessage"`. Old BlueBubbles session keys do not become iMessage session keys, so preserve session files/backups but do not promise automatic chat-history continuity inside agent transcripts.
+- Current OpenClaw cron config had no active task entries, but local/private patch scripts and LaunchAgents still referenced BlueBubbles. Audit scripts before disabling the BlueBubbles app/server; especially do not run old `post-update-patch.sh` against a target where `extensions/bluebubbles` no longer exists.
+- Do not enable both BlueBubbles and iMessage monitors on the live gateway unless intentionally doing a bounded parallel test. Preferred sequence: add disabled `channels.imessage`, stop gateway, enable/probe iMessage, run DM/group/action tests, then cut traffic over and only later remove BlueBubbles.
+
 ## Push and record
 
 Before push:
