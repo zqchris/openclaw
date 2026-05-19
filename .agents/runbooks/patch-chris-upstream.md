@@ -482,6 +482,22 @@ BlueBubbles 在 v2026.5.12 已被上游删除，主消息面切到 iMessage（`e
 
 iMessage 切换的完整笔记见 `.agents/runbooks/patch-chris-v2026.5.12-record.md` 里的 "Runtime and config migration" 段。
 
+### ACP / acpx 已停用（2026-05-18）
+
+`extensions/acpx`、`agents.list.codex`（runtime: acp）、`bindings[]` 里的 ACP 路由**全部刻意关掉**。原因：
+
+- Codex 走 native harness 已足够（per `extensions/acpx/skills/acp-router/SKILL.md`：「Codex chat binding defaults to the native Codex app-server plugin unless ACP is explicit」）
+- 复杂编码任务用 `coding-agent` skill（spawn 后台 PTY 进程）替代 ACP 路径
+- Codex home bridge feature（`feat(acpx): add codex home bridge`）已 drop，OAuth 改走 inline auth-profile（`openclaw models auth login --provider openai-codex`）
+
+**升级时注意**：
+
+- 不要在 cherry-pick / rebase 时把 `feat(acpx)` 或 ACP runtime backend 相关本地修复带回来
+- `agents.list.codex` 不要再加回 config
+- 别误信 doctor「acpx unreferenced sidecar」之类的提示 enable 回去
+- `~/.openclaw/agents/codex/`、`~/.openclaw/workspace-codex/` 保留作历史归档，但 runtime 不会触发
+- 如果要复活：`plugins.entries.acpx.enabled = true` + 在 `plugins.allow` 加回 `"acpx"` + 重新加 codex agent entry
+
 ### 新增补丁规则
 
 ```bash
