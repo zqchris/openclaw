@@ -194,6 +194,9 @@ describe("telegram channel message adapter", () => {
           expect(adapter.send!.text).toBeTypeOf("function");
         },
         batch: proveBatch,
+        reconcileUnknownSend: () => {
+          expect(adapter.durableFinal?.reconcileUnknownSend).toBeTypeOf("function");
+        },
       },
     });
   });
