@@ -636,6 +636,50 @@ describe("feishuPlugin actions", () => {
     });
   });
 
+  it("auto-threads `send` text against the topic root when thread context is available", async () => {
+    sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om_topic", chatId: "oc_group_1" });
+
+    await feishuPlugin.actions?.handleAction?.({
+      action: "send",
+      params: { to: "chat:oc_group_1", text: "topic reply" },
+      cfg,
+      accountId: undefined,
+      sessionKey: "feishu:group:oc_group_1:topic:om_topic_root",
+      toolContext: { currentMessageId: "om_child_reply", currentThreadTs: "om_topic_root" },
+    } as never);
+
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith({
+      cfg,
+      to: "chat:oc_group_1",
+      text: "topic reply",
+      accountId: undefined,
+      replyToMessageId: "om_topic_root",
+      replyInThread: true,
+    });
+  });
+
+  it("falls back to the current message when only a native topic container id is available", async () => {
+    sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om_topic", chatId: "oc_group_1" });
+
+    await feishuPlugin.actions?.handleAction?.({
+      action: "send",
+      params: { to: "chat:oc_group_1", text: "topic reply" },
+      cfg,
+      accountId: undefined,
+      sessionKey: "feishu:group:oc_group_1:topic:omt_topic_container",
+      toolContext: { currentMessageId: "om_child_reply", currentThreadTs: "omt_topic_container" },
+    } as never);
+
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith({
+      cfg,
+      to: "chat:oc_group_1",
+      text: "topic reply",
+      accountId: undefined,
+      replyToMessageId: "om_child_reply",
+      replyInThread: true,
+    });
+  });
+
   it("auto-threads `send` cards against the inbound trigger in group_topic sessions", async () => {
     sendCardFeishuMock.mockResolvedValueOnce({ messageId: "om_topic_card", chatId: "oc_group_1" });
 

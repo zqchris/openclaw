@@ -388,6 +388,10 @@ function resolveFeishuTopicAutoThreadAnchor(ctx: FeishuSendActionContext): strin
   if (!isFeishuGroupTopicSessionKey(ctx.sessionKey)) {
     return undefined;
   }
+  const currentThreadId = normalizeFeishuToolContextMessageId(ctx.toolContext?.currentThreadTs);
+  if (currentThreadId && !currentThreadId.toLowerCase().startsWith("omt_")) {
+    return currentThreadId;
+  }
   return normalizeFeishuToolContextMessageId(ctx.toolContext?.currentMessageId);
 }
 
