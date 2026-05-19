@@ -29,7 +29,6 @@ import {
   resolveFeishuGroupSession,
   resolveFeishuMediaList,
   resolveFeishuReferencedMessageMedia,
-  toMessageResourceType,
 } from "./bot-content.js";
 import {
   buildAgentMediaPayload,

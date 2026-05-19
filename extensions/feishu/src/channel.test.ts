@@ -688,7 +688,7 @@ describe("feishuPlugin actions", () => {
       "media args",
     );
     expect(mediaArgs.threadId).toBe("om_inbound");
-    expect("replyToId" in mediaArgs).toBe(false);
+    expect(mediaArgs.replyToId).toBeUndefined();
   });
 
   it("auto-threads `send` in group_topic_sender sessions too", async () => {

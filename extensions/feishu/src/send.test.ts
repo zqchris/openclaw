@@ -513,7 +513,7 @@ describe("getMessageFeishu", () => {
         contentType: "interactive",
         content: "hello from card 2.0",
         createTime: 1710000000000,
-      },
+      }),
     ]);
   });
 });

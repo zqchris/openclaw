@@ -23,17 +23,17 @@ vi.mock("./runtime.js", () => ({
 }));
 
 let resolveFeishuReferencedMessageMedia: typeof import("./bot-content.js").resolveFeishuReferencedMessageMedia;
-let _clearFeishuReferencedMediaCacheForTests: typeof import("./bot-content.js")._clearFeishuReferencedMediaCacheForTests;
+let clearFeishuReferencedMediaCacheForTests: typeof import("./bot-content.js").clearFeishuReferencedMediaCacheForTests;
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  ({ resolveFeishuReferencedMessageMedia, _clearFeishuReferencedMediaCacheForTests } =
+  ({ resolveFeishuReferencedMessageMedia, clearFeishuReferencedMediaCacheForTests } =
     await import("./bot-content.js"));
-  _clearFeishuReferencedMediaCacheForTests();
+  clearFeishuReferencedMediaCacheForTests();
 });
 
 afterEach(() => {
-  _clearFeishuReferencedMediaCacheForTests();
+  clearFeishuReferencedMediaCacheForTests();
 });
 
 describe("resolveFeishuReferencedMessageMedia", () => {
