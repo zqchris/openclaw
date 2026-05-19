@@ -26,6 +26,7 @@ import type { TelegramBotOptions } from "./bot.types.js";
 import { buildTelegramThreadParams } from "./bot/helpers.js";
 import type { TelegramContext, TelegramStreamMode } from "./bot/types.js";
 import type { TelegramReplyChainEntry } from "./message-cache.js";
+import { isTelegramSendMessageNetworkFailure } from "./outbound-recovery.js";
 
 const telegramInboundLog = createSubsystemLogger("gateway/channels/telegram").child("inbound");
 
@@ -38,6 +39,10 @@ export function formatTelegramInboundLogLine(params: {
 }): string {
   const kindLabel = params.mediaType ? `, ${params.mediaType}` : "";
   return `Inbound message ${params.from} -> ${params.to} (${params.chatType}${kindLabel}, ${params.body.length} chars)`;
+}
+
+function shouldSuppressGenericDispatchFailureReply(err: unknown): boolean {
+  return isTelegramSendMessageNetworkFailure(String(err));
 }
 
 type TelegramMessageProcessorDeps = Omit<
@@ -230,6 +235,11 @@ export const createTelegramMessageProcessor = (deps: TelegramMessageProcessorDep
       return result;
     } catch (err) {
       runtime.error?.(danger(`telegram message processing failed: ${String(err)}`));
+      if (shouldSuppressGenericDispatchFailureReply(err)) {
+        const result: TelegramMessageProcessingResult = { kind: "completed" };
+        recordCurrentUpdateProcessingResult(result);
+        return result;
+      }
       if (!spooledReplay) {
         try {
           await bot.api.sendMessage(

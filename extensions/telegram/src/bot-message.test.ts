@@ -347,6 +347,27 @@ describe("telegram bot message processor", () => {
     expect(frame.result).toBeUndefined();
   });
 
+  it("does not replace failed final Telegram delivery with a generic error reply", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const runtimeError = vi.fn();
+    buildTelegramMessageContext.mockResolvedValue(createMessageContext());
+    dispatchTelegramMessage.mockRejectedValue(
+      new Error("Network request for 'sendMessage' failed!"),
+    );
+    const processMessage = createTelegramMessageProcessor({
+      ...baseDeps,
+      bot: { api: { sendMessage } },
+      runtime: { error: runtimeError },
+    } as unknown as Parameters<typeof createTelegramMessageProcessor>[0]);
+
+    await expect(processSampleMessage(processMessage)).resolves.toEqual({ kind: "completed" });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(runtimeError).toHaveBeenCalledWith(
+      "telegram message processing failed: Error: Network request for 'sendMessage' failed!",
+    );
+  });
+
   it("propagates spooled dispatcher failure results without sending fallback", async () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     const dispatchError = new Error("agent dispatch failed");

@@ -64,6 +64,7 @@ import * as monitorModule from "./monitor.js";
 import { looksLikeTelegramTargetId, normalizeTelegramMessagingTarget } from "./normalize.js";
 import { createTelegramOutboundAdapter } from "./outbound-adapter.js";
 import { parseTelegramThreadId } from "./outbound-params.js";
+import { reconcileTelegramUnknownSend } from "./outbound-recovery.js";
 import { releaseStoppedTelegramPollingLease } from "./polling-lease.js";
 import type { TelegramProbe } from "./probe.js";
 import * as probeModule from "./probe.js";
@@ -244,7 +245,7 @@ const telegramChannelOutbound = createTelegramOutboundAdapter({
   preferFinalAssistantVisibleText: true,
 });
 
-const telegramMessageAdapter = createChannelMessageAdapterFromOutbound<OpenClawConfig>({
+const telegramMessageAdapterBase = createChannelMessageAdapterFromOutbound<OpenClawConfig>({
   id: "telegram",
   live: {
     capabilities: {
@@ -267,6 +268,18 @@ const telegramMessageAdapter = createChannelMessageAdapterFromOutbound<OpenClawC
   },
   outbound: telegramChannelOutbound,
 });
+
+const telegramMessageAdapter = {
+  ...telegramMessageAdapterBase,
+  durableFinal: {
+    ...telegramMessageAdapterBase.durableFinal,
+    capabilities: {
+      ...telegramMessageAdapterBase.durableFinal?.capabilities,
+      reconcileUnknownSend: true,
+    },
+    reconcileUnknownSend: reconcileTelegramUnknownSend,
+  },
+};
 
 const telegramMessageActions: ChannelMessageActionAdapter = {
   resolveExecutionMode: (ctx) =>
