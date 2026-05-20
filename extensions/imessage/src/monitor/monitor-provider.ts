@@ -54,6 +54,10 @@ import { attachIMessageMonitorAbortHandler } from "./abort-handler.js";
 import { runIMessageCatchup } from "./catchup-bridge.js";
 import { resolveCatchupConfig } from "./catchup.js";
 import { combineIMessagePayloads } from "./coalesce.js";
+import {
+  needsIMessageConversationRepair,
+  repairIMessageConversationFromHistory,
+} from "./conversation-repair.js";
 import { createIMessageEchoCachingSend, deliverReplies } from "./deliver.js";
 import { createSentMessageCache } from "./echo-cache.js";
 import {
@@ -765,7 +769,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
   }
 
   const handleMessage = async (raw: unknown) => {
-    const message = parseIMessageNotification(raw);
+    let message = parseIMessageNotification(raw);
     if (!message) {
       // A malformed RPC notification means imsg shipped a payload shape
       // we do not understand — almost always a real bridge bug. Surface
@@ -778,6 +782,33 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
           : typeof raw;
       runtime.error?.(`imessage: dropping malformed RPC message payload (keys=${shape})`);
       return;
+    }
+    if (needsIMessageConversationRepair(message)) {
+      const activeClient = client;
+      if (!activeClient) {
+        runtime.log?.(
+          warn("imessage: dropping chat_id=0 payload before monitor client became active"),
+        );
+        return;
+      }
+      const repair = await repairIMessageConversationFromHistory({
+        message,
+        client: activeClient,
+        timeoutMs: probeTimeoutMs,
+        logVerbose,
+      });
+      if (repair.kind === "drop") {
+        runtime.log?.(
+          warn(
+            `imessage: dropping chat_id=0 payload with no recoverable conversation (${repair.reason})`,
+          ),
+        );
+        return;
+      }
+      if (repair.kind === "repaired") {
+        logVerbose(`imessage: repaired chat_id=0 payload to chat_id=${repair.chatId}`);
+      }
+      message = repair.message;
     }
     await inboundDebouncer.enqueue({ message });
   };

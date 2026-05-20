@@ -134,6 +134,24 @@ describe("imessage monitor gating + envelope builders", () => {
     });
   });
 
+  it("drops chat_id=0 payloads without conversation metadata instead of routing them as DMs", async () => {
+    const decision = await resolve({
+      message: {
+        id: 3,
+        guid: "malformed-link-guid",
+        chat_id: 0,
+        chat_guid: "",
+        chat_identifier: "",
+        sender: "owner@example.com",
+        is_from_me: false,
+        text: "https://example.com\n@openclaw what is this?",
+        is_group: false,
+      },
+    });
+
+    expect(decision).toEqual({ kind: "drop", reason: "invalid chat metadata" });
+  });
+
   it("drops group messages without mention by default", async () => {
     const decision = await resolve({
       message: {

@@ -260,6 +260,10 @@ function normalizeReplyField(value: unknown): string | undefined {
   return undefined;
 }
 
+function hasNonEmptyConversationField(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function describeReplyContext(message: IMessagePayload): IMessageReplyContext | null {
   const body = normalizeReplyField(message.reply_to_text);
   if (!body) {
@@ -462,6 +466,15 @@ export async function resolveIMessageInboundDecision(params: {
   const messageText = params.messageText.trim();
   const bodyText = params.bodyText.trim();
   const reactionContext = resolveIMessageReactionContext(params.message, bodyText || messageText);
+
+  if (
+    typeof chatId === "number" &&
+    chatId <= 0 &&
+    !hasNonEmptyConversationField(chatGuid) &&
+    !hasNonEmptyConversationField(chatIdentifier)
+  ) {
+    return { kind: "drop", reason: "invalid chat metadata" };
+  }
 
   const groupIdCandidate = chatId !== undefined ? String(chatId) : undefined;
   const groupAllowFromWithLegacyChatTargets = mergeIMessageGroupAllowFromWithLegacyChatTargets({
