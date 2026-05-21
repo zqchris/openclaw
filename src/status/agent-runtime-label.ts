@@ -1,6 +1,7 @@
 import { isCliProvider } from "../agents/model-selection.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
@@ -14,6 +15,46 @@ const AGENT_RUNTIME_LABELS: Readonly<Record<string, string>> = {
   "claude-cli": "Claude CLI",
   "google-gemini-cli": "Gemini CLI",
 };
+
+type CliProviderLabelCacheEntry = {
+  registryVersion: number;
+  value: boolean;
+};
+
+let cliProviderLabelCache = new WeakMap<OpenClawConfig, Map<string, CliProviderLabelCacheEntry>>();
+let cliProviderLabelCacheClearScheduled = false;
+
+function scheduleCliProviderLabelCacheClear(): void {
+  if (cliProviderLabelCacheClearScheduled) {
+    return;
+  }
+  cliProviderLabelCacheClearScheduled = true;
+  queueMicrotask(() => {
+    cliProviderLabelCache = new WeakMap();
+    cliProviderLabelCacheClearScheduled = false;
+  });
+}
+
+function isCliProviderForLabel(provider: string, config: OpenClawConfig): boolean {
+  const key = normalizeOptionalLowercaseString(provider) ?? provider;
+  const registryVersion = getActivePluginRegistryVersion();
+  scheduleCliProviderLabelCacheClear();
+  let cache = cliProviderLabelCache.get(config);
+  if (!cache) {
+    cache = new Map();
+    cliProviderLabelCache.set(config, cache);
+  }
+  const cached = cache.get(key);
+  if (cached && cached.registryVersion === registryVersion) {
+    return cached.value;
+  }
+  const resolved = isCliProvider(provider, config);
+  cache.set(key, {
+    registryVersion,
+    value: resolved,
+  });
+  return resolved;
+}
 
 export function resolveAgentRuntimeLabel(args: {
   config?: OpenClawConfig;
@@ -43,7 +84,13 @@ export function resolveAgentRuntimeLabel(args: {
     normalizeOptionalString(args.sessionEntry?.providerOverride) ??
     normalizeOptionalString(args.fallbackProvider);
   const provider = providerRaw ? sanitizeTerminalText(providerRaw) : undefined;
-  if (provider && isCliProvider(provider, args.config)) {
+  const cliProvider =
+    provider && args.config
+      ? isCliProviderForLabel(provider, args.config)
+      : provider
+        ? isCliProvider(provider, args.config)
+        : false;
+  if (provider && cliProvider) {
     return (
       AGENT_RUNTIME_LABELS[normalizeOptionalLowercaseString(providerRaw) ?? ""] ??
       `${provider} (cli)`
