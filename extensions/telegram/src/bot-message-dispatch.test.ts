@@ -1620,7 +1620,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
     });
 
     expect(answerDraftStream.update).toHaveBeenCalledTimes(1);
-    expect(answerDraftStream.update).toHaveBeenCalledWith("Shelling\n\n`🛠️ Exec`");
+    expect(answerDraftStream.update).toHaveBeenCalledWith("Shelling\n\n🛠️ Exec");
     expectDeliveredReply(0, { text: "Branch is up to date" });
   });
 
