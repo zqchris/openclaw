@@ -352,8 +352,19 @@ function areAnyFeishuReactionActionsEnabled(cfg: ClawdbotConfig): boolean {
   return false;
 }
 
+function normalizeFeishuToolContextMessageId(messageId: unknown): string | undefined {
+  if (typeof messageId === "number" && Number.isFinite(messageId)) {
+    return String(messageId);
+  }
+  if (typeof messageId === "string") {
+    const trimmed = messageId.trim();
+    return trimmed || undefined;
+  }
+  return undefined;
+}
+
 function isFeishuGroupTopicSessionKey(sessionKey: string | null | undefined): boolean {
-  if (typeof sessionKey !== "string" || !sessionKey) {
+  if (typeof sessionKey !== "string" || !sessionKey.trim()) {
     return false;
   }
   const parsed = parseFeishuConversationId({ conversationId: sessionKey });
@@ -377,22 +388,55 @@ function resolveFeishuTopicAutoThreadAnchor(ctx: FeishuSendActionContext): strin
   if (!isFeishuGroupTopicSessionKey(ctx.sessionKey)) {
     return undefined;
   }
-  const inbound = ctx.toolContext?.currentMessageId;
-  return typeof inbound === "string" && inbound.length > 0 ? inbound : undefined;
+  const currentThreadId = normalizeFeishuToolContextMessageId(ctx.toolContext?.currentThreadTs);
+  if (currentThreadId && !currentThreadId.toLowerCase().startsWith("omt_")) {
+    return currentThreadId;
+  }
+  return normalizeFeishuToolContextMessageId(ctx.toolContext?.currentMessageId);
 }
 
 function buildFeishuSendReplyAnchor(ctx: FeishuSendActionContext): FeishuActionReplyAnchor {
+  const explicitReplyToMessageId = resolveFeishuMessageId(ctx.params);
   if (ctx.action === "thread-reply") {
     return {
-      replyToMessageId: resolveFeishuMessageId(ctx.params),
+      replyToMessageId: explicitReplyToMessageId,
       replyInThread: true,
     };
   }
+  const isGroupTopicSession = isFeishuGroupTopicSessionKey(ctx.sessionKey);
   const autoThreadId = resolveFeishuTopicAutoThreadAnchor(ctx);
+  const replyToMessageId = explicitReplyToMessageId ?? autoThreadId;
   return {
-    replyToMessageId: autoThreadId,
-    replyInThread: autoThreadId !== undefined,
+    replyToMessageId,
+    replyInThread: isGroupTopicSession && replyToMessageId !== undefined,
   };
+}
+
+function resolveFeishuReactionMessageId(ctx: {
+  params: Record<string, unknown>;
+  sessionKey?: string | null;
+  toolContext?: {
+    currentMessageId?: string | number | null;
+    currentThreadTs?: string | null;
+  } | null;
+}): string | undefined {
+  const explicitMessageId = resolveFeishuMessageId(ctx.params);
+  const currentMessageId = normalizeFeishuToolContextMessageId(ctx.toolContext?.currentMessageId);
+  if (!currentMessageId) {
+    return explicitMessageId;
+  }
+  if (!explicitMessageId) {
+    return currentMessageId;
+  }
+  if (!isFeishuGroupTopicSessionKey(ctx.sessionKey)) {
+    return explicitMessageId;
+  }
+
+  const currentThreadId = ctx.toolContext?.currentThreadTs?.trim();
+  if (explicitMessageId === currentThreadId || explicitMessageId.toLowerCase().startsWith("omt_")) {
+    return currentMessageId;
+  }
+  return explicitMessageId;
 }
 
 function isSupportedFeishuDirectConversationId(conversationId: string): boolean {
@@ -844,9 +888,8 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
                 mediaUrl,
                 accountId: ctx.accountId ?? undefined,
                 mediaLocalRoots: ctx.mediaLocalRoots,
-                ...(replyInThread
-                  ? { threadId: replyToMessageId }
-                  : { replyToId: replyToMessageId }),
+                replyToId: replyInThread ? undefined : replyToMessageId,
+                threadId: replyInThread ? replyToMessageId : undefined,
                 ...(audioAsVoice === true ? { audioAsVoice: true } : {}),
               });
             } else {
@@ -1120,7 +1163,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           }
 
           if (ctx.action === "react") {
-            const messageId = resolveFeishuMessageId(ctx.params);
+            const messageId = resolveFeishuReactionMessageId(ctx);
             if (!messageId) {
               throw new Error("Feishu reaction requires messageId.");
             }
@@ -1187,7 +1230,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           }
 
           if (ctx.action === "reactions") {
-            const messageId = resolveFeishuMessageId(ctx.params);
+            const messageId = resolveFeishuReactionMessageId(ctx);
             if (!messageId) {
               throw new Error("Feishu reactions lookup requires messageId.");
             }
