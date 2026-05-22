@@ -64,6 +64,12 @@ export function isFeishuGroupChatType(chatType: FeishuChatType | undefined): boo
   return chatType === "group" || chatType === "topic_group";
 }
 
+export type FeishuMessageMediaKeys = {
+  imageKey?: string;
+  fileKey?: string;
+  fileName?: string;
+};
+
 export type FeishuMessageInfo = {
   messageId: string;
   chatId: string;
@@ -76,6 +82,13 @@ export type FeishuMessageInfo = {
   createTime?: number;
   /** Feishu thread ID (omt_xxx) — present when the message belongs to a topic thread. */
   threadId?: string;
+  /**
+   * Raw image_key/file_key extracted from the message body for media types
+   * (image/file/audio/video/sticker/media). Allows callers to download the
+   * actual attachment when surfacing quoted/root/historical messages instead
+   * of falling back to a `<media:*>` text placeholder only.
+   */
+  mediaKeys?: FeishuMessageMediaKeys;
 };
 
 export interface FeishuProbeResult extends BaseProbeResult {
