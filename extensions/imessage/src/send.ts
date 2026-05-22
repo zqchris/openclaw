@@ -41,6 +41,7 @@ type IMessageSendOpts = {
   cliPath?: string;
   dbPath?: string;
   service?: IMessageService;
+  transport?: "auto" | "bridge" | "applescript";
   region?: string;
   accountId?: string;
   replyToId?: string;
@@ -851,6 +852,7 @@ export async function sendMessageIMessage(
     resolveTargetService(target) ??
     (account.config.service as IMessageService | undefined);
   const timeoutMs = opts.timeoutMs ?? account.config.probeTimeoutMs;
+  const transport = opts.transport ?? account.config.transport ?? "auto";
   const region = opts.region?.trim() || account.config.region?.trim() || "US";
   const maxBytes =
     typeof opts.maxBytes === "number"
@@ -949,6 +951,7 @@ export async function sendMessageIMessage(
   const params: Record<string, unknown> = {
     text: message,
     service: service || "auto",
+    transport,
     region,
   };
   if (resolvedReplyToId) {
