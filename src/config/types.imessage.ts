@@ -49,6 +49,22 @@ export type IMessageAccountConfig = {
   actions?: IMessageActionConfig;
   /** Optional default send service (imessage|sms|auto). */
   service?: "imessage" | "sms" | "auto";
+  /**
+   * Preferred imsg RPC `send` transport. `imsg` 0.8.1+ accepts an explicit
+   * `transport` parameter alongside the default auto-selection:
+   *
+   * - `"auto"`: prefer the IMCore private-API bridge when injected, fall back
+   *   to AppleScript only if the bridge is unavailable.
+   * - `"bridge"`: bridge only — fail rather than fall back to AppleScript.
+   * - `"applescript"`: legacy AppleScript path.
+   *
+   * Defaults to `"auto"`. The default is safer than letting `imsg` pick its
+   * own legacy default, which has been observed to stall on AppleScript with
+   * `AppleEvent -1712` timeouts on macOS deployments where Messages.app is
+   * unresponsive to AppleEvents even though the bridge works. Tracks
+   * openclaw/openclaw#84329.
+   */
+  transport?: "auto" | "bridge" | "applescript";
   /** Optional default region (used when sending SMS). */
   region?: string;
   /** Direct message access policy (default: pairing). */
