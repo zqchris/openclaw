@@ -117,6 +117,8 @@ type CreateFeishuReplyDispatcherParams = {
   chatId: string;
   allowReasoningPreview?: boolean;
   replyToMessageId?: string;
+  /** Message that should receive transient typing reactions; may differ from the send target. */
+  typingMessageId?: string;
   /** When true, preserve typing indicator on reply target but send messages without reply metadata */
   skipReplyToInMessages?: boolean;
   replyInThread?: boolean;
@@ -137,6 +139,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     agentId,
     chatId,
     replyToMessageId,
+    typingMessageId,
     skipReplyToInMessages,
     replyInThread,
     threadReply,
@@ -145,6 +148,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     identity,
   } = params;
   const sendReplyToMessageId = skipReplyToInMessages ? undefined : replyToMessageId;
+  const transientTypingMessageId = typingMessageId ?? replyToMessageId;
   const threadReplyMode = threadReply === true;
   const effectiveReplyInThread = threadReplyMode ? true : replyInThread;
   const allowTopLevelReplyFallback =
@@ -168,7 +172,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         if (!(account.config.typingIndicator ?? true)) {
           return;
         }
-        if (!replyToMessageId) {
+        if (!transientTypingMessageId) {
           return;
         }
         // Skip typing indicator for old messages — likely replays after context
@@ -188,7 +192,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         }
         typingState = await addTypingIndicator({
           cfg,
-          messageId: replyToMessageId,
+          messageId: transientTypingMessageId,
           accountId,
           runtime: params.runtime,
         });
