@@ -181,6 +181,38 @@ describe("sendMessageIMessage receipts", () => {
     expect(result.receipt.sentAt).toBeGreaterThan(0);
   });
 
+  it("uses configured transport for send-attachment media sends", async () => {
+    const client = createClient({ message_id: 12345 });
+    const runCliJson = vi.fn().mockResolvedValueOnce({ messageId: "p:0/media-guid" });
+
+    await sendMessageIMessage("chat_guid:chat-1", "", {
+      config: {
+        channels: {
+          imessage: {
+            accounts: {
+              default: { transport: "bridge" },
+            },
+          },
+        },
+      },
+      client,
+      mediaUrl: "/tmp/image.png",
+      resolveAttachmentImpl: async () => ({ path: "/tmp/image.png", contentType: "image/png" }),
+      runCliJson,
+    });
+
+    expect(getClientMocks(client).request).not.toHaveBeenCalled();
+    expect(runCliJson).toHaveBeenCalledWith([
+      "send-attachment",
+      "--chat",
+      "chat-1",
+      "--file",
+      "/tmp/image.png",
+      "--transport",
+      "bridge",
+    ]);
+  });
+
   it("sends audioAsVoice media through send-attachment audio transport", async () => {
     const client = createClient({ message_id: 12345 });
     const runCliJson = vi.fn().mockResolvedValueOnce({ messageId: "p:0/voice-guid" });
@@ -984,5 +1016,43 @@ describe("sendMessageIMessage receipts", () => {
     ).rejects.toThrow("imsg rpc error (send)");
 
     expect(runCliJson).not.toHaveBeenCalled();
+  });
+
+  it("defaults transport to 'auto' so imsg prefers the IMCore bridge over AppleScript", async () => {
+    const client = createClient({ guid: "p:0/imsg-1" });
+
+    await sendMessageIMessage("chat_id:42", "hello", {
+      config: IMESSAGE_TEST_CFG,
+      client,
+    });
+
+    expect(getClientMocks(client).request).toHaveBeenCalledWith(
+      "send",
+      expect.objectContaining({ transport: "auto" }),
+      expect.any(Object),
+    );
+  });
+
+  it("respects accounts.<id>.transport when configured", async () => {
+    const client = createClient({ guid: "p:0/imsg-1" });
+
+    await sendMessageIMessage("chat_id:42", "hello", {
+      config: {
+        channels: {
+          imessage: {
+            accounts: {
+              default: { transport: "bridge" },
+            },
+          },
+        },
+      },
+      client,
+    });
+
+    expect(getClientMocks(client).request).toHaveBeenCalledWith(
+      "send",
+      expect.objectContaining({ transport: "bridge" }),
+      expect.any(Object),
+    );
   });
 });

@@ -43,6 +43,7 @@ type IMessageSendOpts = {
   cliPath?: string;
   dbPath?: string;
   service?: IMessageService;
+  transport?: "auto" | "bridge" | "applescript";
   region?: string;
   accountId?: string;
   replyToId?: string;
@@ -730,6 +731,7 @@ async function trySendAttachmentForTarget(params: {
   dbPath?: string;
   target: ReturnType<typeof parseIMessageTarget>;
   service?: IMessageService;
+  transport: NonNullable<IMessageSendOpts["transport"]>;
   filePath: string;
   audioAsVoice?: boolean;
   replyToId?: string;
@@ -765,7 +767,7 @@ async function trySendAttachmentForTarget(params: {
       ...(params.audioAsVoice ? ["--audio"] : []),
       ...(params.replyToId ? ["--reply-to", params.replyToId] : []),
       "--transport",
-      "auto",
+      params.transport,
     ]);
   } catch (error) {
     if (isAttachmentCommandFallbackError(error)) {
@@ -863,6 +865,7 @@ export async function sendMessageIMessage(
   // for callers that tuned them. See DEFAULT_IMESSAGE_SEND_TIMEOUT_MS.
   const timeoutMs =
     opts.timeoutMs ?? account.config.probeTimeoutMs ?? DEFAULT_IMESSAGE_SEND_TIMEOUT_MS;
+  const transport = opts.transport ?? account.config.transport ?? "auto";
   const region = opts.region?.trim() || account.config.region?.trim() || "US";
   const maxBytes =
     typeof opts.maxBytes === "number"
@@ -925,6 +928,7 @@ export async function sendMessageIMessage(
       dbPath: chatDbLookupPath,
       target,
       service,
+      transport,
       filePath,
       audioAsVoice: opts.audioAsVoice,
       ...(resolvedReplyToId ? { replyToId: resolvedReplyToId } : {}),
@@ -963,6 +967,7 @@ export async function sendMessageIMessage(
   const params: Record<string, unknown> = {
     text: message,
     service: service || "auto",
+    transport,
     region,
   };
   if (resolvedReplyToId) {
