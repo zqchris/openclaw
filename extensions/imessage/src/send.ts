@@ -753,6 +753,7 @@ async function trySendAttachmentForTarget(params: {
   dbPath?: string;
   target: ReturnType<typeof parseIMessageTarget>;
   service?: IMessageService;
+  transport: IMessageSendTransport;
   filePath: string;
   audioAsVoice?: boolean;
   replyToId?: string;
@@ -802,7 +803,7 @@ async function trySendAttachmentForTarget(params: {
       ...(params.audioAsVoice ? ["--audio"] : []),
       ...(params.replyToId ? ["--reply-to", params.replyToId] : []),
       "--transport",
-      "auto",
+      params.transport,
     ]);
   } catch (error) {
     forgetPersistedIMessageEchoKey(pendingEchoKey);
@@ -962,6 +963,7 @@ export async function sendMessageIMessage(
       dbPath: chatDbLookupPath,
       target,
       service,
+      transport: sendTransport,
       filePath,
       audioAsVoice: opts.audioAsVoice,
       ...(resolvedReplyToId ? { replyToId: resolvedReplyToId } : {}),
