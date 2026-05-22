@@ -263,11 +263,18 @@ export function parseFeishuMessageEvent(
   const senderOpenId = event.sender.sender_id.open_id?.trim();
   const senderUserId = event.sender.sender_id.user_id?.trim();
   const senderFallbackId = senderOpenId || senderUserId || "";
+  const replyTargetMessageId = normalizeOptionalString(event.message.reply_target_message_id);
+  const parentId = normalizeOptionalString(event.message.parent_id);
+  const upperMessageId = normalizeOptionalString(event.message.upper_message_id);
+  const threadId = normalizeOptionalString(event.message.thread_id);
+  const rootId =
+    normalizeOptionalString(event.message.root_id) ??
+    (threadId ? undefined : (replyTargetMessageId ?? parentId ?? upperMessageId));
 
   const ctx: FeishuMessageContext = {
     chatId: event.message.chat_id,
     messageId: event.message.message_id,
-    replyTargetMessageId: event.message.reply_target_message_id?.trim() || undefined,
+    replyTargetMessageId,
     suppressReplyTarget: event.message.suppress_reply_target === true,
     senderId: senderUserId || senderOpenId || "",
     // Keep the historical field name, but fall back to user_id when open_id is unavailable
@@ -276,9 +283,10 @@ export function parseFeishuMessageEvent(
     chatType: event.message.chat_type,
     mentionedBot,
     hasAnyMention,
-    rootId: event.message.root_id || undefined,
-    parentId: event.message.parent_id || undefined,
-    threadId: event.message.thread_id || undefined,
+    rootId,
+    parentId,
+    upperMessageId,
+    threadId,
     content,
     contentType: event.message.message_type,
   };
@@ -292,6 +300,54 @@ export function parseFeishuMessageEvent(
   }
 
   return ctx;
+}
+
+function resolveFeishuTypingTargetMessageId(params: {
+  ctx: Pick<
+    FeishuMessageContext,
+    "messageId" | "replyTargetMessageId" | "parentId" | "rootId" | "suppressReplyTarget"
+  >;
+  threaded: boolean;
+}): string | undefined {
+  // Feishu/Lark can keep `reply_target_message_id` pinned to the topic starter
+  // for every message in a reply topic. Visible replies and typing reactions
+  // should attach to the inbound message first; the reply target still feeds
+  // quoted context separately.
+  const currentMessageId = normalizeOptionalString(params.ctx.messageId);
+  if (!params.ctx.suppressReplyTarget && currentMessageId) {
+    return currentMessageId;
+  }
+
+  const explicitTarget =
+    normalizeOptionalString(params.ctx.replyTargetMessageId) ??
+    (params.threaded ? normalizeOptionalString(params.ctx.parentId) : undefined);
+  if (explicitTarget) {
+    return explicitTarget;
+  }
+
+  return params.threaded ? normalizeOptionalString(params.ctx.rootId) : undefined;
+}
+
+function resolveFeishuSendReplyTargetMessageId(params: {
+  ctx: Pick<
+    FeishuMessageContext,
+    "messageId" | "replyTargetMessageId" | "parentId" | "rootId" | "suppressReplyTarget"
+  >;
+  threaded: boolean;
+}): string | undefined {
+  if (params.threaded) {
+    return (
+      normalizeOptionalString(params.ctx.rootId) ??
+      normalizeOptionalString(params.ctx.replyTargetMessageId) ??
+      normalizeOptionalString(params.ctx.parentId) ??
+      (params.ctx.suppressReplyTarget ? undefined : normalizeOptionalString(params.ctx.messageId))
+    );
+  }
+
+  return (
+    normalizeOptionalString(params.ctx.replyTargetMessageId) ??
+    (params.ctx.suppressReplyTarget ? undefined : normalizeOptionalString(params.ctx.messageId))
+  );
 }
 
 const MAX_MENTION_CONTEXT_NAME_LENGTH = 80;
@@ -766,7 +822,9 @@ export async function handleFeishuMessage(params: {
     const feishuTo = isGroup ? `chat:${ctx.chatId}` : `user:${ctx.senderOpenId}`;
     const peerId = isGroup ? (groupSession?.peerId ?? ctx.chatId) : ctx.senderOpenId;
     const parentPeer = isGroup ? (groupSession?.parentPeer ?? null) : null;
-    const replyInThread = isGroup ? (groupSession?.replyInThread ?? false) : false;
+    const replyInThread = isGroup
+      ? (groupSession?.replyInThread ?? false)
+      : Boolean(ctx.rootId || ctx.threadId);
     const feishuAcpConversationSupported =
       !isGroup ||
       groupSession?.groupSessionScope === "group_topic" ||
@@ -870,12 +928,14 @@ export async function handleFeishuMessage(params: {
         bindingResolution: configuredBinding,
       });
       if (!ensured.ok) {
-        const replyTargetMessageId =
-          isGroup &&
-          (groupSession?.groupSessionScope === "group_topic" ||
-            groupSession?.groupSessionScope === "group_topic_sender")
-            ? (ctx.rootId ?? ctx.messageId)
-            : ctx.messageId;
+        const replyTargetMessageId = resolveFeishuSendReplyTargetMessageId({
+          ctx,
+          threaded:
+            isGroup &&
+            (groupSession?.groupSessionScope === "group_topic" ||
+              groupSession?.groupSessionScope === "group_topic_sender" ||
+              (groupSession?.replyInThread ?? false)),
+        });
         await sendMessageFeishu({
           cfg: effectiveCfg,
           to: `chat:${ctx.chatId}`,
@@ -994,14 +1054,17 @@ export async function handleFeishuMessage(params: {
             ).commandAccess.authorized
       : undefined;
 
-    // Fetch quoted/replied message content if parentId exists
+    // Fetch quoted/replied message content. Feishu can send both a root/thread
+    // anchor and an immediate reply target; prefer the visible reply target so
+    // the agent sees the message the user actually replied to.
     let quotedMessageInfo: Awaited<ReturnType<typeof getMessageFeishu>> = null;
     let quotedContent: string | undefined;
-    if (ctx.parentId) {
+    const quotedMessageId = ctx.replyTargetMessageId ?? ctx.parentId;
+    if (quotedMessageId) {
       try {
         quotedMessageInfo = await getMessageFeishu({
           cfg,
-          messageId: ctx.parentId,
+          messageId: quotedMessageId,
           accountId: account.accountId,
         });
         if (
@@ -1104,7 +1167,7 @@ export async function handleFeishuMessage(params: {
       }
       if (!rootMessageFetched) {
         rootMessageFetched = true;
-        if (ctx.rootId === ctx.parentId && quotedMessageInfo) {
+        if (ctx.rootId === quotedMessageId && quotedMessageInfo) {
           rootMessageInfo = quotedMessageInfo;
         } else {
           try {
@@ -1309,7 +1372,10 @@ export async function handleFeishuMessage(params: {
         },
         reply: {
           to: feishuTo,
-          replyToId: ctx.parentId,
+          // Chris patch: prefer reply_target_message_id over parent_id so reactions
+          // and outbound anchors land on the actual quoted message in threaded
+          // conversations, not the immediate parent in the flat reply chain.
+          replyToId: ctx.replyTargetMessageId ?? ctx.parentId,
           messageThreadId: ctx.rootId && isTopicSessionForThread ? ctx.rootId : undefined,
         },
         message: {
@@ -1337,13 +1403,13 @@ export async function handleFeishuMessage(params: {
     };
 
     // Determine reply target based on group session mode:
-    // - Topic-mode groups (group_topic / group_topic_sender): reply to the topic
-    //   root so the bot stays in the same thread.
-    // - Groups with explicit replyInThread config: reply to the root so the bot
-    //   stays in the thread the user expects.
+    // - Topic-mode groups (group_topic / group_topic_sender) and explicit
+    //   replyInThread configs target the topic root so the bot stays in-thread.
     // - Normal groups (auto-detected threadReply from root_id): reply to the
     //   triggering message itself. Using rootId here would silently push the
     //   reply into a topic thread invisible in the main chat view (#32980).
+    // - Direct-message topics have no group config, so keep those replies tied
+    //   to the root topic instead of falling back to the top-level DM.
     const isTopicSession =
       isGroup &&
       (groupSession?.groupSessionScope === "group_topic" ||
@@ -1351,13 +1417,28 @@ export async function handleFeishuMessage(params: {
     const configReplyInThread =
       isGroup &&
       (groupConfig?.replyInThread ?? feishuCfg?.replyInThread ?? "disabled") === "enabled";
-    const replyTargetMessageId =
-      isTopicSession || configReplyInThread
-        ? (ctx.rootId ??
-          ctx.replyTargetMessageId ??
-          (ctx.suppressReplyTarget ? undefined : ctx.messageId))
-        : (ctx.replyTargetMessageId ?? (ctx.suppressReplyTarget ? undefined : ctx.messageId));
-    const threadReply = isGroup ? (groupSession?.threadReply ?? false) : false;
+    const preferThreadRootReplyTarget = Boolean(
+      isTopicSession || configReplyInThread || (!isGroup && (ctx.rootId || ctx.threadId)),
+    );
+    const replyTargetMessageId = resolveFeishuSendReplyTargetMessageId({
+      ctx,
+      threaded: preferThreadRootReplyTarget,
+    });
+    const typingTargetMessageId = resolveFeishuTypingTargetMessageId({
+      ctx,
+      threaded: preferThreadRootReplyTarget,
+    });
+    // Match the actual Feishu reply target used for delivery. A top-level
+    // message can start a thread via reply_in_thread even when Feishu has not
+    // emitted a root_id yet; subagent completion must still return there.
+    const messageThreadId = replyInThread
+      ? replyTargetMessageId
+      : ctx.rootId && isTopicSessionForThread
+        ? ctx.rootId
+        : undefined;
+    const threadReply = isGroup
+      ? (groupSession?.threadReply ?? false)
+      : Boolean(ctx.rootId || ctx.threadId);
     const lastRouteThreadId =
       isGroup && (isTopicSession || configReplyInThread || threadReply)
         ? replyTargetMessageId
@@ -1481,7 +1562,8 @@ export async function handleFeishuMessage(params: {
             chatId: ctx.chatId,
             allowReasoningPreview,
             replyToMessageId: replyTargetMessageId,
-            skipReplyToInMessages: !isGroup,
+            typingMessageId: typingTargetMessageId,
+            skipReplyToInMessages: !isGroup && !replyInThread,
             replyInThread,
             rootId: ctx.rootId,
             threadReply,
@@ -1646,7 +1728,8 @@ export async function handleFeishuMessage(params: {
         chatId: ctx.chatId,
         allowReasoningPreview,
         replyToMessageId: replyTargetMessageId,
-        skipReplyToInMessages: !isGroup,
+        typingMessageId: typingTargetMessageId,
+        skipReplyToInMessages: !isGroup && !replyInThread,
         replyInThread,
         rootId: ctx.rootId,
         threadReply,
