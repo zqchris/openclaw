@@ -6,6 +6,7 @@ import {
 import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import type { ClawdbotConfig } from "../runtime-api.js";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
+import { inferFeishuMediaPlaceholder, parseFeishuMediaKeys } from "./bot-content.js";
 import { createFeishuClient } from "./client.js";
 import { createFeishuApiError, requestFeishuApi } from "./comment-shared.js";
 import type { MentionTarget } from "./mention-target.types.js";
@@ -17,7 +18,12 @@ import {
   toFeishuSendResult,
 } from "./send-result.js";
 import { resolveFeishuSendTarget } from "./send-target.js";
-import type { FeishuChatType, FeishuMessageInfo, FeishuSendResult } from "./types.js";
+import type {
+  FeishuChatType,
+  FeishuMessageInfo,
+  FeishuMessageMediaKeys,
+  FeishuSendResult,
+} from "./types.js";
 
 const WITHDRAWN_REPLY_ERROR_CODES = new Set([230011, 231003]);
 const INTERACTIVE_CARD_FALLBACK_TEXT = "[Interactive Card]";
@@ -318,6 +324,8 @@ function parseInteractiveCardContent(parsed: unknown): string {
   return parseInteractivePostFallback(parsed) ?? INTERACTIVE_CARD_FALLBACK_TEXT;
 }
 
+const FEISHU_MEDIA_MSG_TYPES = new Set(["image", "file", "audio", "video", "media", "sticker"]);
+
 function parseFeishuMessageContent(rawContent: string, msgType: string): string {
   if (!rawContent) {
     return "";
@@ -343,6 +351,28 @@ function parseFeishuMessageContent(rawContent: string, msgType: string): string 
     return parseInteractiveCardContent(parsed);
   }
 
+  if (FEISHU_MEDIA_MSG_TYPES.has(msgType)) {
+    // Use the same `<media:*>` placeholder convention as the inbound parser
+    // in bot-content.ts so quoted/root/thread media reads downstream the same
+    // as a fresh inbound message. The actual file_key/image_key is surfaced
+    // via FeishuMessageInfo.mediaKeys so callers can download the resource.
+    const placeholder = inferFeishuMediaPlaceholder(msgType);
+    if (msgType === "audio") {
+      const speechToText =
+        typeof (parsed as { speech_to_text?: unknown })?.speech_to_text === "string"
+          ? ((parsed as { speech_to_text?: string }).speech_to_text ?? "").trim()
+          : "";
+      if (speechToText) {
+        return speechToText;
+      }
+    }
+    const fileName =
+      typeof (parsed as { file_name?: unknown })?.file_name === "string"
+        ? ((parsed as { file_name?: string }).file_name ?? "").trim()
+        : "";
+    return fileName ? `${placeholder} (${fileName})` : placeholder;
+  }
+
   if (typeof parsed === "string") {
     return parsed;
   }
@@ -359,12 +389,27 @@ function parseFeishuMessageContent(rawContent: string, msgType: string): string 
   return `[${msgType || "unknown"} message]`;
 }
 
+function extractFeishuMessageMediaKeys(
+  rawContent: string,
+  msgType: string,
+): FeishuMessageMediaKeys | undefined {
+  if (!FEISHU_MEDIA_MSG_TYPES.has(msgType) || !rawContent) {
+    return undefined;
+  }
+  const keys = parseFeishuMediaKeys(rawContent, msgType);
+  if (!keys.imageKey && !keys.fileKey) {
+    return undefined;
+  }
+  return keys;
+}
+
 function parseFeishuMessageItem(
   item: FeishuMessageGetItem,
   fallbackMessageId?: string,
 ): FeishuMessageInfo {
   const msgType = item.msg_type ?? "text";
   const rawContent = item.body?.content ?? "";
+  const mediaKeys = extractFeishuMessageMediaKeys(rawContent, msgType);
 
   return {
     messageId: item.message_id ?? fallbackMessageId ?? "",
@@ -383,6 +428,7 @@ function parseFeishuMessageItem(
     contentType: msgType,
     createTime: item.create_time ? Number.parseInt(item.create_time, 10) : undefined,
     threadId: item.thread_id || undefined,
+    ...(mediaKeys ? { mediaKeys } : {}),
   };
 }
 
@@ -436,6 +482,7 @@ export type FeishuThreadMessageInfo = {
   content: string;
   contentType: string;
   createTime?: number;
+  mediaKeys?: FeishuMessageMediaKeys;
 };
 
 /**
@@ -509,6 +556,7 @@ export async function listFeishuThreadMessages(params: {
       content: parsed.content,
       contentType: parsed.contentType,
       createTime: parsed.createTime,
+      ...(parsed.mediaKeys ? { mediaKeys: parsed.mediaKeys } : {}),
     });
 
     if (results.length >= limit) {
