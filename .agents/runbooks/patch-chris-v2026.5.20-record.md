@@ -196,6 +196,129 @@ Build + tests + gates, all before gateway restart:
     band. Do not run `openclaw doctor --fix` on this machine.
   - Existing: gateway bound to lan (0.0.0.0). Same as before.
 
+## Post-upgrade incident: iMessage outbound silently failing
+
+After the v2026.5.20 upgrade landed, iMessage agent replies stopped being
+delivered. Root cause and fix took ~90 min to land properly and pulled in
+one new patch.
+
+### Symptom timeline
+
+- 2026-05-20 22:14: last successful `[imessage] delivered reply`.
+- 2026-05-21 morning: 6 imessage provider auto-restarts in 75 min (09:06
+  through 11:06). Single successful `delivered reply` at 19:34, then
+  silence.
+- 2026-05-22 04:22: 吴悠洋 sent "你要不以后取消这个微博热搜吧" via
+  iMessage. social agent session `9d034cb9-…f17b64a` received it, ran
+  cron tools, produced final assistant text "好，我把 22:00 的「微博热搜
+  总结」关掉了。以后不再往群里发这个。" at 04:27:10 — **never
+  delivered**. Subsequent sessions (`705a1364-…4252777` at 09:13)
+  recorded the explicit error `{"status":"error","tool":"message",
+"error":"imsg rpc timeout (send)"}`.
+- 2026-05-22 12:51: full root cause identified and fixed; outbound
+  restored.
+
+### Root cause
+
+`imsg-bridge-helper.dylib` injection into Messages.app had been lost.
+The bridge stayed registered as `bridge version: v0` (degraded stub)
+which accepts handshakes and answers `imsg status` but silently fails
+every actual RPC (`send-message`, `get-account-info`, `tapback`,
+`check-imessage-availability` all time out at 10 s). The AppleScript
+fallback path that `imsg` would normally take also failed because
+Messages.app stopped responding to AppleEvents (`AppleEvent timed out
+-1712` at 120 s).
+
+The dylib was almost certainly lost when Messages.app was force-
+relaunched by macOS at some point on 2026-05-21 morning; `imsg launch`
+sets `DYLD_INSERT_LIBRARIES` only on the process it launches itself,
+and a plain `open -a Messages` (or system-driven relaunch) replaces
+the process without re-injection. The bridge handshake degraded to v0
+and stayed that way until `imsg launch` was re-run.
+
+### Fix path attempted (for the record — what did and didn't work)
+
+| Step                                                                  | Outcome                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multiple gateway bootout/bootstrap                                    | No effect — kept reconnecting to the same broken bridge.                                                                                                                                                                                                                     |
+| `brew upgrade imsg` 0.8.1 → 0.9.0 (after `brew unpin imsg`)           | **Backfire**: 0.9.0 enters auto-restart loop on macOS 26 (upstream issue [openclaw/imsg#117](https://github.com/openclaw/imsg/issues/117) "imsg launch timeout"). 7 orphan `imsg rpc` processes piled on mini. Rolled back to 0.8.1 from local `~/imsg-rollback-0.8.1` copy. |
+| `pkill Messages.app && open -a Messages`                              | No effect — relaunched without dylib injection, bridge still v0.                                                                                                                                                                                                             |
+| `kill imagent` (PID 787, 45 days uptime)                              | No effect — daemon was fine.                                                                                                                                                                                                                                                 |
+| **`imsg-mini-ssh-wrapper launch`** (re-runs `imsg launch` end-to-end) | **Fix**: kills Messages.app, relaunches with `DYLD_INSERT_LIBRARIES=imsg-bridge-helper.dylib`. Bridge upgrades from `v0` → `v2 (v2 inbox active)`. `send-rich` returns in 0.45 s. `tapback` returns in 0.7 s.                                                                |
+
+### Hardening patch (commit `88e590ff53`)
+
+`fix(imessage): default imsg send transport to "auto" instead of
+legacy AppleScript`. Even with the bridge live, openclaw's
+`extensions/imessage/src/send.ts` was calling the JSON-RPC `send`
+method without the `transport` parameter, leaving `imsg` to fall back
+to its legacy default — AppleScript on the Messages.app event loop.
+Tracks upstream [openclaw/openclaw#84329](https://github.com/openclaw/openclaw/issues/84329).
+
+- `src/config/types.imessage.ts`: add `transport?: "auto" | "bridge" |
+"applescript"` field on `IMessageAccountConfig`.
+- `src/config/zod-schema.providers-core.ts`: validate the enum.
+- `extensions/imessage/src/send.ts`: read transport from opts/account/
+  default and include it in the JSON-RPC `send` params.
+- `extensions/imessage/src/send.test.ts`: cover default + per-account
+  override.
+- `src/config/bundled-channel-config-metadata.generated.ts` and
+  `docs/.generated/config-baseline.sha256` regenerated to pick up the
+  schema addition (otherwise `pnpm openclaw config set
+channels.imessage.accounts.default.transport bridge` rejects the new
+  key as "additional property not allowed").
+
+Set `channels.imessage.accounts.default.transport = "bridge"` in
+`~/.openclaw/openclaw.json` so this machine never silently falls back
+to AppleScript again — `"bridge"` fails fast if the dylib is missing,
+which surfaces the problem instead of hiding it for 30 s of RPC
+timeout.
+
+### Follow-up TODO (not done)
+
+- Write a launchd watcher that re-runs `imsg launch` whenever a fresh
+  `Messages.app` process appears without the bridge dylib injected.
+  Chris explicitly deferred this — accepted the manual `imsg launch`
+  step in exchange for not adding more system surface area.
+- File a tracking note on `openclaw/openclaw#84329` summarising the
+  reproduction evidence collected here (AppleEvent -1712 timeout in
+  120 s, bridge v0 vs v2 distinction, fix via `transport: "bridge"`).
+- File a tracking note on `openclaw/imsg#117` confirming the same
+  bridge-attach failure mode happens on macOS 26.3 (build 25D125) and
+  not only 26.5.
+
+## Runtime rollout
+
+- Gateway restart performed: `launchctl bootout gui/$(id -u)/ai.openclaw.gateway`
+  then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist`.
+  First `bootstrap` returned exit 5 (IO error) due to `ThrottleInterval=10` on
+  the plist; second attempt within a few seconds succeeded cleanly.
+- Post-restart verification at `2026-05-22T11:43:52+08:00`:
+  - `pnpm openclaw --version`: `OpenClaw 2026.5.20 (72bcd9a)`.
+  - `launchctl print gui/$(id -u)/ai.openclaw.gateway`: state=running.
+  - `[gateway] ready` 4 seconds after start.
+  - Channel probes `ok: true` for imessage, feishu (葫芦), telegram (@zkyo_bot).
+  - 0 `LiveSessionModelSwitchError` since restart (the e7952cdb7f / 011218fd58
+    fix continues to work; previous evidence of pre-patch occurrences on
+    2026-03-29 is unchanged).
+  - 0 ERR\_/FATAL/UnhandledRejection/TypeError/ReferenceError in
+    `~/Library/Logs/openclaw/gateway.log` since 11:43:52. One earlier
+    `ERR_MODULE_NOT_FOUND` at 11:27 was the running-old-gateway hitting the
+    newly-rebuilt dist mid-build; resolved by the restart.
+  - `delivery-recovery` (Telegram, `7902a21523`) initialized cleanly:
+    `Found 3 pending delivery entries — starting recovery`.
+- Doctor warnings (read-only `pnpm openclaw doctor`):
+  - New in v2026.5.20: plaintext-secret detection flags
+    `messages.tts.providers.elevenlabs.apiKey`,
+    `plugins.entries.brave.config.webSearch.apiKey`,
+    `channels.feishu.accounts.default.appSecret`. **Not addressed in this
+    upgrade**; migration to `openclaw secrets configure` can be done out of
+    band. Do not run `openclaw doctor --fix` on this machine.
+  - Existing: gateway bound to lan (0.0.0.0). Same as before.
+- The transport=bridge config change (commit `88e590ff53`) requires a
+  **second** gateway restart to load the new dist; pending Chris's
+  decision on timing.
+
 ## Notes / follow-ups
 
 - The Feishu attachment resolver (`d7eb9586bf`) still has the three known
@@ -210,3 +333,8 @@ Build + tests + gates, all before gateway restart:
 - BlueBubbles references have been fully purged from the local patch surface.
   The SSRF patch is now framed for "local LLM proxies / mDNS LAN services"
   and is a cleaner upstream PR candidate.
+- **imsg bridge dylib must be re-injected via `imsg launch` after any
+  Messages.app restart** — the macOS `DYLD_INSERT_LIBRARIES`
+  injection does not survive a plain relaunch. The post-relaunch state
+  is silently degraded (`bridge version: v0`), not failed. Look here
+  first if iMessage outbound stops working without obvious cause.
