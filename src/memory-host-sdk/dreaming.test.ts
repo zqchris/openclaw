@@ -171,6 +171,35 @@ describe("memory dreaming host helpers", () => {
     ]);
   });
 
+  it("filters dreaming.excludeAgents out of resolved workspaces", () => {
+    const cfg = {
+      agents: {
+        list: [
+          { id: "main", workspace: "/workspace/main" },
+          { id: "email", workspace: "/workspace/email" },
+          { id: "ivy", workspace: "/workspace/ivy" },
+        ],
+      },
+      plugins: {
+        entries: {
+          "memory-core": {
+            config: {
+              dreaming: {
+                enabled: true,
+                excludeAgents: ["email"],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(resolveMemoryDreamingWorkspaces(cfg)).toEqual([
+      { workspaceDir: "/workspace/main", agentIds: ["main"] },
+      { workspaceDir: "/workspace/ivy", agentIds: ["ivy"] },
+    ]);
+  });
+
   it("includes the runtime primary workspace alongside configured subagent workspaces", () => {
     const cfg = {
       agents: {
