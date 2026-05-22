@@ -593,5 +593,42 @@ describe("sendMessageIMessage receipts", () => {
     ).rejects.toThrow("imsg rpc error (send)");
 
     expect(runCliJson).not.toHaveBeenCalled();
+
+  it("defaults transport to 'auto' so imsg prefers the IMCore bridge over AppleScript", async () => {
+    const client = createClient({ guid: "p:0/imsg-1" });
+
+    await sendMessageIMessage("chat_id:42", "hello", {
+      config: IMESSAGE_TEST_CFG,
+      client,
+    });
+
+    expect(client.request).toHaveBeenCalledWith(
+      "send",
+      expect.objectContaining({ transport: "auto" }),
+      expect.any(Object),
+    );
+  });
+
+  it("respects accounts.<id>.transport when configured", async () => {
+    const client = createClient({ guid: "p:0/imsg-1" });
+
+    await sendMessageIMessage("chat_id:42", "hello", {
+      config: {
+        channels: {
+          imessage: {
+            accounts: {
+              default: { transport: "bridge" },
+            },
+          },
+        },
+      },
+      client,
+    });
+
+    expect(client.request).toHaveBeenCalledWith(
+      "send",
+      expect.objectContaining({ transport: "bridge" }),
+      expect.any(Object),
+    );
   });
 });
