@@ -192,6 +192,17 @@ const FeishuSharedConfigShape = {
   blockStreaming: BlockStreamingSchema,
   blockStreamingCoalesce: BlockStreamingCoalesceSchema,
   mediaMaxMb: z.number().positive().optional(),
+  /**
+   * Per-turn cap (megabytes) for downloading attachments from referenced
+   * messages — quoted/root messages and topic-thread history. Limits how much
+   * the bot will pull when a single inbound triggers history hydration. When
+   * the budget is exhausted, remaining history media stays as a `<media:*>`
+   * placeholder and the skip is logged. Defaults to 5× `mediaMaxMb` to allow
+   * a 20-message thread of typical-sized attachments without surprising the
+   * user, while still bounding worst-case download cost. Set to 0 to disable
+   * referenced-message media downloads entirely.
+   */
+  historyMediaMaxMb: z.number().nonnegative().optional(),
   httpTimeoutMs: z.number().int().positive().max(300_000).optional(),
   heartbeat: ChannelHeartbeatVisibilitySchema,
   renderMode: RenderModeSchema,
