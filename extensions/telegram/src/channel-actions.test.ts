@@ -443,5 +443,51 @@ describe("telegramMessageActions", () => {
     expect(discovery?.actions).toContain("send");
     expect(discovery?.actions).toContain("react");
     expect(discovery?.actions).not.toContain("poll");
+
+  it("routes the canonical 'upload-file' action to sendMessage so the agent can attach a document", async () => {
+    await telegramMessageActions.handleAction?.({
+      channel: "telegram",
+      action: "upload-file",
+      params: {
+        to: "123456",
+        attachments: [{ type: "document", path: "/tmp/openclaw/example.pdf" }],
+      },
+      cfg: {} as never,
+      accountId: "default",
+      mediaLocalRoots: [],
+      sessionKey: "telegram-upload",
+    } as never);
+
+    const call = handleTelegramActionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(call?.action).toBe("sendMessage");
+    expect(call?.to).toBe("123456");
+  });
+
+  it("rejects 'read' with an explanation that Telegram bots cannot mark messages read", async () => {
+    await expect(
+      telegramMessageActions.handleAction?.({
+        channel: "telegram",
+        action: "read",
+        params: { to: "123456" },
+        cfg: {} as never,
+        accountId: "default",
+        mediaLocalRoots: [],
+        sessionKey: "telegram-read",
+      } as never),
+    ).rejects.toThrow(/Telegram bots cannot mark messages as read/);
+  });
+
+  it("rejects unknown actions with a list of supported actions so the agent can self-correct", async () => {
+    await expect(
+      telegramMessageActions.handleAction?.({
+        channel: "telegram",
+        action: "fly-to-the-moon" as never,
+        params: { to: "123456" },
+        cfg: {} as never,
+        accountId: "default",
+        mediaLocalRoots: [],
+        sessionKey: "telegram-unknown",
+      } as never),
+    ).rejects.toThrow(/Supported: .*send.*sticker/);
   });
 });

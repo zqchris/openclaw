@@ -43,11 +43,22 @@ const TELEGRAM_MESSAGE_ACTION_MAP = {
   poll: "poll",
   react: "react",
   send: "sendMessage",
+  // Telegram sendMessage carries document/photo/audio/video attachments via
+  // params, so route the canonical "upload-file" intent there instead of
+  // throwing. Agents reaching for "upload-file" almost always mean send-with-
+  // attachment.
+  "upload-file": "sendMessage",
   sticker: "sendSticker",
   "sticker-search": "searchSticker",
   "topic-create": "createForumTopic",
   "topic-edit": "editForumTopic",
 } as const satisfies Partial<Record<ChannelMessageActionName, string>>;
+
+// Canonical actions that Telegram bots cannot perform. Listed explicitly so the
+// error message tells the caller why instead of just "unsupported".
+const TELEGRAM_INHERENTLY_UNSUPPORTED_ACTIONS: Partial<Record<ChannelMessageActionName, string>> = {
+  read: "Telegram bots cannot mark messages as read. This is a no-op for this channel.",
+};
 
 function resolveTelegramMessageActionName(action: ChannelMessageActionName) {
   return TELEGRAM_MESSAGE_ACTION_MAP[action as keyof typeof TELEGRAM_MESSAGE_ACTION_MAP];
@@ -194,7 +205,13 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
   }) => {
     const telegramAction = resolveTelegramMessageActionName(action);
     if (!telegramAction) {
-      throw new Error(`Unsupported Telegram action: ${action}`);
+      const inherent = TELEGRAM_INHERENTLY_UNSUPPORTED_ACTIONS[action];
+      if (inherent) {
+        throw new Error(`Unsupported Telegram action: ${action}. ${inherent}`);
+      }
+      throw new Error(
+        `Unsupported Telegram action: ${action}. Supported: ${Object.keys(TELEGRAM_MESSAGE_ACTION_MAP).sort().join(", ")}.`,
+      );
     }
     return await telegramMessageActionRuntime.handleTelegramAction(
       {
