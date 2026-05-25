@@ -76,6 +76,15 @@ const TELEGRAM_ACTION_ALIASES = {
   searchSticker: "searchSticker",
   send: "sendMessage",
   sendMessage: "sendMessage",
+  // File / document upload aliases — agents commonly hallucinate these.
+  // sendMessage handles attachments (photo/document/audio/video) via params,
+  // so route file-upload intents here instead of throwing.
+  sendDocument: "sendMessage",
+  sendFile: "sendMessage",
+  upload: "sendMessage",
+  uploadFile: "sendMessage",
+  "send-file": "sendMessage",
+  "upload-file": "sendMessage",
   sendSticker: "sendSticker",
   sticker: "sendSticker",
   stickerCacheStats: "stickerCacheStats",
@@ -83,6 +92,8 @@ const TELEGRAM_ACTION_ALIASES = {
   "topic-create": "createForumTopic",
   "topic-edit": "editForumTopic",
 } as const;
+
+const TELEGRAM_PUBLIC_ACTION_NAMES = Object.keys(TELEGRAM_ACTION_ALIASES).sort();
 
 type TelegramActionName = (typeof TELEGRAM_ACTION_ALIASES)[keyof typeof TELEGRAM_ACTION_ALIASES];
 type TelegramForumTopicIconColor = (typeof TELEGRAM_FORUM_TOPIC_ICON_COLORS)[number];
@@ -102,7 +113,10 @@ function readTelegramForumTopicIconColor(
 function normalizeTelegramActionName(action: string): TelegramActionName {
   const normalized = TELEGRAM_ACTION_ALIASES[action as keyof typeof TELEGRAM_ACTION_ALIASES];
   if (!normalized) {
-    throw new Error(`Unsupported Telegram action: ${action}`);
+    throw new Error(
+      `Unsupported Telegram action: ${action}. Supported: ${TELEGRAM_PUBLIC_ACTION_NAMES.join(", ")}. ` +
+        `Use "send" with attachments to upload a file; reading is not a bot action (use chat.history instead).`,
+    );
   }
   return normalized;
 }
