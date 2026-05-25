@@ -2,6 +2,15 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "../shared/string-coerce.js";
+import {
+  binaryName,
+  splitShellWords,
+  splitTopLevelPipes,
+  splitTopLevelStages,
+  stripShellPreamble,
+  trimLeadingEnv,
+  unwrapShellWrapper,
+} from "./tool-display-exec-shell.js";
 import { asRecord } from "./tool-display-record.js";
 
 const MUTATING_TOOL_NAMES = new Set([
@@ -67,6 +76,33 @@ const MESSAGE_MUTATING_ACTIONS = new Set([
   "unpin",
 ]);
 
+const READ_ONLY_EXEC_BINS = new Set([
+  "cat",
+  "grep",
+  "head",
+  "jq",
+  "ls",
+  "pwd",
+  "rg",
+  "ripgrep",
+  "tail",
+  "test",
+  "true",
+  "wc",
+]);
+
+const READ_ONLY_GIT_SUBCOMMANDS = new Set([
+  "branch",
+  "diff",
+  "grep",
+  "log",
+  "ls-files",
+  "remote",
+  "rev-parse",
+  "show",
+  "status",
+]);
+
 // Structured file-target identity for cross-tool same-target recovery.
 // Carried alongside `actionFingerprint` so comparison does not have to
 // re-parse the joined fingerprint string. Re-parsing was unsafe because
@@ -94,6 +130,127 @@ type ToolActionRef = {
 function normalizeActionName(value: unknown): string | undefined {
   const normalized = normalizeOptionalLowercaseString(value)?.replace(/[\s-]+/g, "_");
   return normalized || undefined;
+}
+
+function firstXargsCommandIndex(words: string[]): number | undefined {
+  for (let i = 1; i < words.length; i += 1) {
+    const token = words[i];
+    if (!token) {
+      continue;
+    }
+    if (token === "--") {
+      return i + 1 < words.length ? i + 1 : undefined;
+    }
+    if (token === "-I" || token === "--replace" || token === "-E" || token === "-e") {
+      i += 1;
+      continue;
+    }
+    if (token.startsWith("--replace=") || token.startsWith("-I")) {
+      continue;
+    }
+    if (token.startsWith("-")) {
+      continue;
+    }
+    return i;
+  }
+  return undefined;
+}
+
+function isReadOnlyFindCommand(words: string[]): boolean {
+  return !words.some(
+    (token) =>
+      token === "-delete" ||
+      token === "-exec" ||
+      token === "-execdir" ||
+      token === "-ok" ||
+      token === "-okdir",
+  );
+}
+
+function isReadOnlySedCommand(words: string[]): boolean {
+  return !words.some((token) => token === "-i" || token.startsWith("-i") || token === "--in-place");
+}
+
+function isReadOnlyGitCommand(words: string[]): boolean {
+  const globalWithValue = new Set([
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--config-env",
+  ]);
+  for (let i = 1; i < words.length; i += 1) {
+    const token = words[i];
+    if (!token) {
+      continue;
+    }
+    if (token === "--") {
+      const sub = words[i + 1];
+      return sub ? READ_ONLY_GIT_SUBCOMMANDS.has(sub) : false;
+    }
+    if (token.startsWith("--")) {
+      if (!token.includes("=") && globalWithValue.has(token)) {
+        i += 1;
+      }
+      continue;
+    }
+    if (token.startsWith("-")) {
+      if (globalWithValue.has(token)) {
+        i += 1;
+      }
+      continue;
+    }
+    return READ_ONLY_GIT_SUBCOMMANDS.has(token);
+  }
+  return false;
+}
+
+function isReadOnlyExecWords(words: string[]): boolean {
+  const trimmedWords = trimLeadingEnv(words);
+  const bin = binaryName(trimmedWords[0]);
+  if (!bin) {
+    return false;
+  }
+  if (READ_ONLY_EXEC_BINS.has(bin)) {
+    return true;
+  }
+  if (bin === "find") {
+    return isReadOnlyFindCommand(trimmedWords);
+  }
+  if (bin === "sed") {
+    return isReadOnlySedCommand(trimmedWords);
+  }
+  if (bin === "git") {
+    return isReadOnlyGitCommand(trimmedWords);
+  }
+  if (bin === "xargs") {
+    const commandIndex = firstXargsCommandIndex(trimmedWords);
+    if (commandIndex === undefined) {
+      return false;
+    }
+    return isReadOnlyExecWords(trimmedWords.slice(commandIndex));
+  }
+  return false;
+}
+
+function isReadOnlyExecStage(stage: string): boolean {
+  const pipeline = splitTopLevelPipes(stage);
+  return (
+    pipeline.length > 0 && pipeline.every((part) => isReadOnlyExecWords(splitShellWords(part)))
+  );
+}
+
+function isReadOnlyExecCommandArgs(args: unknown): boolean {
+  const record = asRecord(args);
+  const rawCommand = typeof record?.command === "string" ? record.command.trim() : undefined;
+  if (!rawCommand) {
+    return false;
+  }
+  const unwrapped = unwrapShellWrapper(rawCommand);
+  const stripped = stripShellPreamble(unwrapped).command || stripShellPreamble(rawCommand).command;
+  const stages = splitTopLevelStages(stripped);
+  return stages.length > 0 && stages.every(isReadOnlyExecStage);
 }
 
 function normalizeFingerprintValue(value: unknown): string | undefined {
@@ -146,10 +303,11 @@ export function isMutatingToolCall(toolName: string, args: unknown): boolean {
     case "write":
     case "edit":
     case "apply_patch":
-    case "exec":
-    case "bash":
     case "sessions_send":
       return true;
+    case "exec":
+    case "bash":
+      return !isReadOnlyExecCommandArgs(args);
     case "process":
       return action != null && PROCESS_MUTATING_ACTIONS.has(action);
     case "message":
