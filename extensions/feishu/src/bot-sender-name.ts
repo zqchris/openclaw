@@ -23,7 +23,13 @@ const IGNORED_PERMISSION_SCOPE_TOKENS = ["contact:contact.base:readonly"];
 const FEISHU_SCOPE_CORRECTIONS: Record<string, string> = {
   "contact:contact.base:readonly": "contact:user.base:readonly",
 };
+// Per-user visibility errors: app is in the group but does not have authority
+// to look up this individual user (Feishu 41050). Distinct from scope errors
+// (99991672) which can be resolved by granting a scope — 41050 just means the
+// user is outside the app's visibility scope and a lookup will never succeed.
+const FEISHU_USER_LOOKUP_UNAUTHORIZED_CODES = new Set<number>([41050]);
 const SENDER_NAME_TTL_MS = 10 * 60 * 1000;
+const SENDER_NAME_NEGATIVE_TTL_MS = 30 * 60 * 1000;
 const senderNameCache = new Map<string, { name: string; expireAt: number }>();
 
 function correctFeishuScopeInUrl(url: string): string {
@@ -38,6 +44,23 @@ function correctFeishuScopeInUrl(url: string): string {
 function shouldSuppressPermissionErrorNotice(permissionError: FeishuPermissionError): boolean {
   const message = normalizeLowercaseStringOrEmpty(permissionError.message);
   return IGNORED_PERMISSION_SCOPE_TOKENS.some((token) => message.includes(token));
+}
+
+function extractFeishuErrorCode(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const data = (err as { response?: { data?: unknown } }).response?.data;
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+  const code = (data as { code?: unknown }).code;
+  return typeof code === "number" ? code : undefined;
+}
+
+export function isFeishuUserLookupUnauthorized(err: unknown): boolean {
+  const code = extractFeishuErrorCode(err);
+  return code !== undefined && FEISHU_USER_LOOKUP_UNAUTHORIZED_CODES.has(code);
 }
 
 function extractPermissionError(err: unknown): FeishuPermissionError | null {
@@ -91,7 +114,7 @@ export async function resolveFeishuSenderName(params: {
   const cached = senderNameCache.get(normalizedSenderId);
   const now = Date.now();
   if (cached && cached.expireAt > now) {
-    return { name: cached.name };
+    return cached.name ? { name: cached.name } : {};
   }
 
   try {
@@ -118,6 +141,16 @@ export async function resolveFeishuSenderName(params: {
       }
       log(`feishu: permission error resolving sender name: code=${permErr.code}`);
       return { permissionError: permErr };
+    }
+    if (isFeishuUserLookupUnauthorized(err)) {
+      // 41050 — app is in the group but cannot look up this user. The result
+      // will never change for this user, so cache an empty name for the
+      // negative TTL to silence repeated per-message log spam.
+      senderNameCache.set(normalizedSenderId, {
+        name: "",
+        expireAt: now + SENDER_NAME_NEGATIVE_TTL_MS,
+      });
+      return {};
     }
     log(`feishu: failed to resolve sender name for ${normalizedSenderId}: ${String(err)}`);
     return {};
