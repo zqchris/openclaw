@@ -1,68 +1,179 @@
 // Feishu tests cover bot sender name plugin behavior.
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveFeishuSenderName } from "./bot-sender-name.js";
-import { FeishuConfigSchema } from "./config-schema.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedFeishuAccount } from "./types.js";
 
-const createFeishuClientMock = vi.hoisted(() => vi.fn());
-
-vi.mock("./client.js", () => ({
-  createFeishuClient: createFeishuClientMock,
+const mockUserGet = vi.fn();
+const mockCreateFeishuClient = vi.fn(() => ({
+  contact: { user: { get: mockUserGet } },
 }));
 
-const account = {
-  accountId: "main",
-  selectionSource: "explicit",
-  enabled: true,
-  configured: true,
-  appId: "app-id",
-  appSecret: "secret",
-  domain: "feishu",
-  config: FeishuConfigSchema.parse({}),
-} satisfies ResolvedFeishuAccount;
+vi.mock("./client.js", () => ({
+  createFeishuClient: mockCreateFeishuClient,
+}));
 
-function mockUserNames(...names: string[]): ReturnType<typeof vi.fn> {
-  const get = vi.fn();
-  for (const name of names) {
-    get.mockResolvedValueOnce({ data: { user: { name } } });
-  }
-  createFeishuClientMock.mockReturnValue({
-    contact: { user: { get } },
-  });
-  return get;
+function buildAccount(overrides: Partial<ResolvedFeishuAccount> = {}): ResolvedFeishuAccount {
+  return {
+    accountId: "default",
+    appId: "cli_test",
+    appSecret: "secret", // pragma: allowlist secret
+    configured: true,
+    ...overrides,
+  } as ResolvedFeishuAccount;
+}
+
+function makeFeishuApiError(code: number, msg: string): Error {
+  const err = new Error("Request failed with status code 400") as Error & {
+    response: { data: { code: number; msg: string } };
+  };
+  err.response = { data: { code, msg } };
+  return err;
 }
 
 describe("resolveFeishuSenderName", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-    createFeishuClientMock.mockReset();
+  beforeEach(() => {
+    mockUserGet.mockReset();
+    mockCreateFeishuClient.mockClear();
+    vi.resetModules();
   });
 
-  it("reuses a cached sender name within the TTL", async () => {
-    const get = mockUserNames("Ada");
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.resetModules();
+  });
 
-    await expect(
-      resolveFeishuSenderName({ account, senderId: "ou_sender_cache", log: vi.fn() }),
-    ).resolves.toEqual({ name: "Ada" });
-    await expect(
-      resolveFeishuSenderName({ account, senderId: "ou_sender_cache", log: vi.fn() }),
-    ).resolves.toEqual({ name: "Ada" });
+  it("returns the resolved name on success and reuses the cache", async () => {
+    const { resolveFeishuSenderName } = await import("./bot-sender-name.js");
+    mockUserGet.mockResolvedValue({ data: { user: { name: "Alice" } } });
+    const log = vi.fn();
 
-    expect(get).toHaveBeenCalledTimes(1);
+    const first = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_alice_success",
+      log,
+    });
+    const second = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_alice_success",
+      log,
+    });
+
+    expect(first.name).toBe("Alice");
+    expect(second.name).toBe("Alice");
+    expect(mockUserGet).toHaveBeenCalledTimes(1);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("silences 41050 'no user authority error' and caches the negative result", async () => {
+    const { resolveFeishuSenderName } = await import("./bot-sender-name.js");
+    mockUserGet.mockRejectedValue(makeFeishuApiError(41050, "no user authority error"));
+    const log = vi.fn();
+
+    const first = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_unauthorized_user",
+      log,
+    });
+    const second = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_unauthorized_user",
+      log,
+    });
+
+    expect(first).toEqual({});
+    expect(second).toEqual({});
+    expect(mockUserGet).toHaveBeenCalledTimes(1);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("still logs and surfaces permission errors with grant URLs (code 99991672)", async () => {
+    const { resolveFeishuSenderName } = await import("./bot-sender-name.js");
+    mockUserGet.mockRejectedValue(
+      makeFeishuApiError(
+        99991672,
+        "permission denied: contact:user.base:readonly https://open.feishu.cn/app/cli_test",
+      ),
+    );
+    const log = vi.fn();
+
+    const result = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_perm_user",
+      log,
+    });
+
+    expect(result.permissionError?.code).toBe(99991672);
+    expect(result.permissionError?.grantUrl).toBe("https://open.feishu.cn/app/cli_test");
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("feishu: permission error resolving sender name"),
+    );
+  });
+
+  it("logs a generic resolution failure when the error is not a known permission case", async () => {
+    const { resolveFeishuSenderName } = await import("./bot-sender-name.js");
+    mockUserGet.mockRejectedValue(new Error("network blip"));
+    const log = vi.fn();
+
+    const result = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_network_user",
+      log,
+    });
+
+    expect(result).toEqual({});
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("feishu: failed to resolve sender name for ou_network_user"),
+    );
   });
 
   it("does not cache sender names when the expiry would exceed Date range", async () => {
+    const { resolveFeishuSenderName } = await import("./bot-sender-name.js");
     vi.useFakeTimers();
     vi.setSystemTime(new Date(8_640_000_000_000_000));
-    const get = mockUserNames("Ada", "Grace");
+    mockUserGet
+      .mockResolvedValueOnce({ data: { user: { name: "Ada" } } })
+      .mockResolvedValueOnce({ data: { user: { name: "Grace" } } });
+    const log = vi.fn();
 
-    await expect(
-      resolveFeishuSenderName({ account, senderId: "ou_sender_overflow", log: vi.fn() }),
-    ).resolves.toEqual({ name: "Ada" });
-    await expect(
-      resolveFeishuSenderName({ account, senderId: "ou_sender_overflow", log: vi.fn() }),
-    ).resolves.toEqual({ name: "Grace" });
+    const first = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_sender_overflow",
+      log,
+    });
+    const second = await resolveFeishuSenderName({
+      account: buildAccount(),
+      senderId: "ou_sender_overflow",
+      log,
+    });
 
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(first).toEqual({ name: "Ada" });
+    expect(second).toEqual({ name: "Grace" });
+    expect(mockUserGet).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("isFeishuUserLookupUnauthorized", () => {
+  it("recognizes 41050 'no user authority error'", async () => {
+    const { isFeishuUserLookupUnauthorized } = await import("./bot-sender-name.js");
+    expect(
+      isFeishuUserLookupUnauthorized(makeFeishuApiError(41050, "no user authority error")),
+    ).toBe(true);
+  });
+
+  it("does not classify other 4xx Feishu errors as user-lookup unauthorized", async () => {
+    const { isFeishuUserLookupUnauthorized } = await import("./bot-sender-name.js");
+    expect(isFeishuUserLookupUnauthorized(makeFeishuApiError(99991672, "permission denied"))).toBe(
+      false,
+    );
+    expect(isFeishuUserLookupUnauthorized(makeFeishuApiError(99991400, "rate limited"))).toBe(
+      false,
+    );
+  });
+
+  it("returns false for non-Feishu errors and non-objects", async () => {
+    const { isFeishuUserLookupUnauthorized } = await import("./bot-sender-name.js");
+    expect(isFeishuUserLookupUnauthorized(new Error("network blip"))).toBe(false);
+    expect(isFeishuUserLookupUnauthorized(undefined)).toBe(false);
+    expect(isFeishuUserLookupUnauthorized(null)).toBe(false);
+    expect(isFeishuUserLookupUnauthorized("string error")).toBe(false);
   });
 });
