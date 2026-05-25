@@ -98,6 +98,7 @@ import {
   emitDynamicToolTerminalDiagnostic,
 } from "./dynamic-tool-diagnostics.js";
 import {
+  CODEX_APP_SERVER_OWNED_DYNAMIC_TOOL_EXCLUDES,
   filterCodexDynamicTools,
   isForcedPrivateQaCodexRuntime,
   normalizeCodexDynamicToolName,
@@ -3394,7 +3395,11 @@ async function buildDynamicTools(input: DynamicToolBuildParams) {
     },
   });
   const codexFilteredTools = addSandboxShellDynamicToolsIfAvailable(
-    filterCodexDynamicTools(allTools, input.pluginConfig),
+    addExplicitOpenClawDynamicToolsForRestrictedAllowlist(
+      filterCodexDynamicTools(allTools, input.pluginConfig),
+      allTools,
+      input,
+    ),
     allTools,
     input,
   );
@@ -3522,6 +3527,51 @@ function addSandboxShellDynamicToolsIfAvailable(
       "Manage sandbox_exec sessions that were started through OpenClaw's configured sandbox backend for this session: list, poll, log, write, send-keys, submit, paste, kill, clear, or remove. Use only for sandbox_exec follow-up; use Codex's native shell session handling for normal native shell commands.",
   };
   return [...filteredTools, sandboxExecTool, sandboxProcessTool];
+}
+
+function addExplicitOpenClawDynamicToolsForRestrictedAllowlist(
+  filteredTools: OpenClawDynamicTool[],
+  allTools: OpenClawDynamicTool[],
+  input: DynamicToolBuildParams,
+): OpenClawDynamicTool[] {
+  const toolsAllow = includeForcedMessageToolAllow(input.params.toolsAllow, input.params);
+  if (
+    input.nativeToolSurfaceEnabled !== false ||
+    toolsAllow === undefined ||
+    toolsAllow.length === 0 ||
+    hasWildcardCodexToolsAllow(toolsAllow)
+  ) {
+    return filteredTools;
+  }
+  const allowSet = new Set(
+    toolsAllow.map((name) => normalizeCodexDynamicToolName(name)).filter(Boolean),
+  );
+  const configExcludeSet = new Set(
+    (input.pluginConfig.codexDynamicToolsExclude ?? [])
+      .map((name) => normalizeCodexDynamicToolName(name))
+      .filter(Boolean),
+  );
+  const existingSet = new Set(
+    filteredTools.map((tool) => normalizeCodexDynamicToolName(tool.name)),
+  );
+  const sandboxOwnsShell =
+    input.sandbox?.enabled === true &&
+    shouldExposeSandboxExecDynamicTool(input) &&
+    !isSandboxShellDynamicToolExcluded(input.pluginConfig);
+  const appServerOwned = new Set<string>(CODEX_APP_SERVER_OWNED_DYNAMIC_TOOL_EXCLUDES);
+  const restored = allTools.filter((tool) => {
+    const normalized = normalizeCodexDynamicToolName(tool.name);
+    if (
+      !appServerOwned.has(normalized) ||
+      !allowSet.has(normalized) ||
+      configExcludeSet.has(normalized) ||
+      existingSet.has(normalized)
+    ) {
+      return false;
+    }
+    return !(sandboxOwnsShell && (normalized === "exec" || normalized === "process"));
+  });
+  return restored.length ? [...filteredTools, ...restored] : filteredTools;
 }
 
 function shouldExposeSandboxExecDynamicTool(input: DynamicToolBuildParams): boolean {
@@ -4855,6 +4905,7 @@ export const testing = {
   buildDeveloperInstructions,
   filterCodexDynamicTools,
   buildDynamicTools,
+  addExplicitOpenClawDynamicToolsForRestrictedAllowlist,
   addSandboxShellDynamicToolsIfAvailable,
   filterCodexDynamicToolsForAllowlist,
   filterToolsForVisionInputs,

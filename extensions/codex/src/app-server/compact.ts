@@ -325,7 +325,18 @@ async function compactCodexNativeThread(
   const appServer = resolveCodexAppServerRuntimeOptions({ pluginConfig: options.pluginConfig });
   const binding = await readCodexAppServerBinding(params.sessionFile, { config: params.config });
   if (!binding?.threadId) {
-    return { ok: false, compacted: false, reason: "no codex app-server thread binding" };
+    embeddedAgentLog.info(
+      "codex app-server compaction skipped because the session has no thread binding",
+      {
+        sessionId: params.sessionId,
+        sessionKey: params.sessionKey,
+      },
+    );
+    return {
+      ok: false,
+      compacted: false,
+      reason: "no codex app-server thread binding",
+    };
   }
   const requestedAuthProfileId = params.authProfileId?.trim() || undefined;
   if (

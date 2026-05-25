@@ -138,6 +138,30 @@ describe("maybeCompactCodexAppServerSession", () => {
     expect(details.itemId).toBe("compact-1");
   });
 
+  it("fails fast when a Codex app-server session has no thread binding", async () => {
+    const info = vi.spyOn(embeddedAgentLog, "info").mockImplementation(() => undefined);
+    const fake = createFakeCodexClient();
+    setCodexAppServerClientFactoryForTest(async () => fake.client);
+    const sessionFile = path.join(tempDir, "pre-codex-session.jsonl");
+
+    const result = await startCompaction(sessionFile);
+
+    const compactResult = requireCompactResult(result);
+    expect(compactResult).toMatchObject({
+      ok: false,
+      compacted: false,
+      reason: "no codex app-server thread binding",
+    });
+    expect(fake.request).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(
+      "codex app-server compaction skipped because the session has no thread binding",
+      {
+        sessionId: "session-1",
+        sessionKey: "agent:main:session-1",
+      },
+    );
+  });
+
   it("reuses the bound auth profile for native compaction", async () => {
     const fake = createFakeCodexClient();
     let seenAuthProfileId: string | undefined;

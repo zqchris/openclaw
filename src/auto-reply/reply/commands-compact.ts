@@ -57,7 +57,8 @@ function isCompactionSkipReason(reason?: string): boolean {
     text.includes("nothing to compact") ||
     text.includes("below threshold") ||
     text.includes("already compacted") ||
-    text.includes("no real conversation messages")
+    text.includes("no real conversation messages") ||
+    text.includes("no codex app-server thread binding")
   );
 }
 
@@ -79,6 +80,9 @@ function formatCompactionReason(reason?: string): string | undefined {
   }
   if (lower.includes("no real conversation messages")) {
     return "no real conversation messages yet";
+  }
+  if (lower.includes("no codex app-server thread binding")) {
+    return "no Codex thread is attached to this session yet";
   }
   return text;
 }
