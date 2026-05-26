@@ -52,18 +52,6 @@ const RECOVERABLE_TOOL_ERROR_KEYWORDS = [
   "requires",
 ] as const;
 
-const READ_ONLY_EXEC_META_PREFIXES = [
-  "check git ",
-  "find files",
-  "list files",
-  "print line",
-  "print lines",
-  "print text",
-  "search ",
-  "show ",
-  "view git ",
-] as const;
-
 const MUTATING_FAILURE_ACTION_PATTERN =
   "(?:write|edit|update|save|create|delete|remove|modify|change|apply|patch|move|rename|send|reply|message|run|execute|execution|command|script|shell|bash|exec|tool|action|operation)";
 
@@ -152,14 +140,6 @@ function shouldMarkNonTerminalToolErrorWarning(lastToolError: ToolErrorSummary):
   return lastToolError.middlewareError === true;
 }
 
-function isReadOnlyExecMeta(meta: string | undefined): boolean {
-  const normalizedMeta = normalizeOptionalLowercaseString(meta);
-  if (!normalizedMeta) {
-    return false;
-  }
-  return READ_ONLY_EXEC_META_PREFIXES.some((prefix) => normalizedMeta.startsWith(prefix));
-}
-
 function resolveToolErrorWarningPolicy(params: {
   lastToolError: ToolErrorSummary;
   hasUserFacingReply: boolean;
@@ -185,12 +165,8 @@ function resolveToolErrorWarningPolicy(params: {
   if (params.suppressToolErrors) {
     return { showWarning: false, includeDetails };
   }
-  const isReadOnlyExecError =
-    isExecLikeToolName(params.lastToolError.toolName) &&
-    isReadOnlyExecMeta(params.lastToolError.meta);
   const isMutatingToolError =
-    params.lastToolError.mutatingAction ??
-    (!isReadOnlyExecError && isLikelyMutatingToolName(params.lastToolError.toolName));
+    params.lastToolError.mutatingAction ?? isLikelyMutatingToolName(params.lastToolError.toolName);
   if (isMutatingToolError) {
     return {
       showWarning: !params.hasUserFacingErrorReply && !params.hasUserFacingFailureAcknowledgement,

@@ -26,32 +26,11 @@ describe("tool mutation helpers", () => {
     );
     expect(writeFingerprint).toBe("tool=write|path=/tmp/demo.txt|id=42");
 
-    const metaOnlyFingerprint = buildToolActionFingerprint(
-      "exec",
-      { command: "touch /tmp/demo.txt" },
-      "touch /tmp/demo.txt",
-    );
-    expect(metaOnlyFingerprint).toBe("tool=exec|meta=touch /tmp/demo.txt");
+    const metaOnlyFingerprint = buildToolActionFingerprint("exec", { command: "ls -la" }, "ls -la");
+    expect(metaOnlyFingerprint).toBe("tool=exec|meta=ls -la");
 
     const readFingerprint = buildToolActionFingerprint("read", { path: "/tmp/demo.txt" });
     expect(readFingerprint).toBeUndefined();
-  });
-
-  it("does not mark read-only shell exploration as mutating", () => {
-    expect(isMutatingToolCall("exec", { command: 'rg "OpenClaw" src' })).toBe(false);
-    expect(
-      isMutatingToolCall("exec", { command: 'find . -name "package.json" | xargs rg name' }),
-    ).toBe(false);
-    expect(isMutatingToolCall("bash", { command: "ls -la && cat package.json" })).toBe(false);
-    expect(isMutatingToolCall("exec", { command: "git status --short" })).toBe(false);
-    expect(isMutatingToolCall("exec", { command: "sed -n '1,40p' src/index.ts" })).toBe(false);
-  });
-
-  it("keeps mutating shell commands conservative", () => {
-    expect(isMutatingToolCall("exec", { command: 'find . -name "*.tmp" -delete' })).toBe(true);
-    expect(isMutatingToolCall("exec", { command: "sed -i '' s/a/b/ file.txt" })).toBe(true);
-    expect(isMutatingToolCall("exec", { command: "pnpm install" })).toBe(true);
-    expect(isMutatingToolCall("bash", { command: "python -c 'print(1)'" })).toBe(true);
   });
 
   it("treats coding-tool path aliases as the same stable target", () => {

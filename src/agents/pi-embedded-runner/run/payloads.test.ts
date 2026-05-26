@@ -351,37 +351,6 @@ describe("buildEmbeddedRunPayloads tool-error warnings", () => {
     });
   });
 
-  it("does not append read-only exec search failures after assistant output", () => {
-    const payloads = buildPayloads({
-      assistantTexts: ["I checked the code paths and found the likely issue."],
-      lastAssistant: { stopReason: "end_turn" } as AssistantMessage,
-      lastToolError: {
-        toolName: "exec",
-        meta: 'search "OpenClaw|agent|runtime|skill" in openclaw (in ~/Code/Github/openclaw/openclaw)',
-        error: "command failed",
-        mutatingAction: false,
-      },
-      verboseLevel: "off",
-    });
-
-    expectSinglePayloadText(payloads, "I checked the code paths and found the likely issue.");
-  });
-
-  it("uses read-only exec display metadata as a fallback when mutation state is absent", () => {
-    const payloads = buildPayloads({
-      assistantTexts: ["The package scan is not relevant to the answer."],
-      lastAssistant: { stopReason: "end_turn" } as AssistantMessage,
-      lastToolError: {
-        toolName: "exec",
-        meta: 'find files named "package.json" in ~/Code/Github/Company -> run xargs rg (agent)',
-        error: "command failed",
-      },
-      verboseLevel: "off",
-    });
-
-    expectSinglePayloadText(payloads, "The package scan is not relevant to the answer.");
-  });
-
   it("marks middleware tool-error warnings after assistant output as non-terminal", () => {
     const payloads = buildPayloads({
       assistantTexts: ["Queued 3 topics."],
