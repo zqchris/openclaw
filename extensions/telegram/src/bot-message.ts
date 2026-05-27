@@ -207,7 +207,10 @@ export const createTelegramMessageProcessor = (deps: TelegramMessageProcessorDep
     } catch (err) {
       runtime.error?.(danger(`telegram message processing failed: ${String(err)}`));
       if (shouldSuppressGenericDispatchFailureReply(err)) {
-        return;
+        // Network-failure cases: don't try to send a generic fallback reply
+        // (it would just fail again). Caller expects Promise<boolean>; match
+        // the trailing `return true;` semantic so type inference stays clean.
+        return true;
       }
       try {
         await bot.api.sendMessage(
