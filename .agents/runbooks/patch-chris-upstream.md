@@ -133,21 +133,43 @@ openclaw --version
    ```
 2. **主 tree 升级/cherry-pick 后 build**: 直接 `trash dist && pnpm build`，**不停 gateway**。注意 build 期间不要改 config / enable plugin（避免 gateway dynamic import 撞上半残 dist）。Build 完成 + step 5.5 自检 → 报告 user，由 user 决定何时重启 gateway。
 
-### 1. 准备（只读 + 备份，不碰运行环境）
+### 1. 准备（只读 + 标桩，不碰运行环境）
 
 ```bash
 # 确认当前版本和分支
 git describe --tags --abbrev=0 main
 git log --oneline -3 patch/chris
 
-# 升级前快照（config/credentials/sessions/workspaces）+ 立即校验
-# 升级是「人工触发的高风险窗口」，独立做一次带 --verify 的快照
-pnpm openclaw backup create --verify --output ~/Backups
+# 升级前在 fork 打 git tag 当回滚锚点（免费、在 git 里、易删）
+TARGET=v2026.5.26   # 替换为本轮目标 tag
+git tag pre-upgrade-${TARGET} patch/chris
+git push origin pre-upgrade-${TARGET}
+
+# 确认 ~/.openclaw 最近一次 daily cron 备份在 24h 内
+# 注意 BSD `date -j` parses Z 时区错，age 计算大约偏 8h；目测 commit date 离今天近就行
+gh api repos/zqchris/openclaw-backup/commits --jq '.[0].commit.author.date'
 ```
 
-备份只读 `~/.openclaw`，不动 gateway。如果升级中途出问题，可以 `openclaw backup verify <archive>` 校验后手动恢复。
+**回滚路径**：
 
-日常已有 `zqchris/openclaw-backup` 每天 04:00 cron 在跑（覆盖 `~/.openclaw` 状态），升级当口的手动快照是额外保险。
+- 代码：`git reset --hard pre-upgrade-${TARGET}`
+- 运行状态：从 `zqchris/openclaw-backup` 拉对应 commit 的 `state/openclaw.json` 等文件
+
+**不再做 `pnpm openclaw backup create --verify`**。理由：
+
+- `~/.openclaw` 已有 `zqchris/openclaw-backup` 每天 04:00 cron 全量覆盖
+- 8GB tarball 写在 `~/Backups/` 后没清理逻辑，每次升级累 8GB+ 死货
+- 边际价值（< 24h 的 state 落差 + GitHub 当时挂了）不抵 disk cost
+
+如果 daily cron > 24h 没跑（gh 返回的时间戳显示落后），那一次性手动备份是合理的兜底：
+
+```bash
+pnpm openclaw backup create --verify --output ~/Backups
+# 用完跑一次清理
+find ~/Backups -name "*-openclaw-backup.tar.gz" -mtime +14 -delete
+```
+
+**⚠️ destructive op 自检**：`git reset --hard` 前先确认 `git branch --show-current` 输出预期分支。曾经因为 `git checkout main` 失败（Aborting）但没看 exit code，下一条 `git reset --hard v<TARGET>` 在 patch/chris 上跑掉，炸掉 22 个补丁。`pre-upgrade-${TARGET}` tag 救场了，但流程要先 `set -e` 或者每条 destructive 命令检查上一步 exit code。
 
 跨端笔记走 Obsidian vault（`~/Documents/ChrisData/Agent/*`），不再写 `zqchris/aidev` `CURRENT_STATE.md`。
 
