@@ -277,7 +277,10 @@ describe("telegram bot message processor", () => {
       runtime: { error: runtimeError },
     } as unknown as Parameters<typeof createTelegramMessageProcessor>[0]);
 
-    await expect(processSampleMessage(processMessage)).resolves.toBeUndefined();
+    // Returns true (matching the trailing `return true;` of the function) so
+    // the caller's Promise<boolean> type holds. The behavior under test is
+    // that the generic error reply is NOT sent — see sendMessage assertion.
+    await expect(processSampleMessage(processMessage)).resolves.toBe(true);
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(runtimeError).toHaveBeenCalledWith(
