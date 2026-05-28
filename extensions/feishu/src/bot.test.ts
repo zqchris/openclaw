@@ -2971,6 +2971,7 @@ describe("handleFeishuMessage command authorization", () => {
       expect.objectContaining({
         MessageThreadId: "msg-new-topic-root",
       }),
+      undefined,
     );
   });
 
@@ -3014,6 +3015,7 @@ describe("handleFeishuMessage command authorization", () => {
       expect.objectContaining({
         MessageThreadId: "om_thread_starter",
       }),
+      undefined,
     );
   });
 
@@ -3205,9 +3207,15 @@ describe("handleFeishuMessage command authorization", () => {
     expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
       expect.objectContaining({
         ReplyToId: "om_actual_reply_target",
-        ReplyToBody: "fresh parent",
         RootMessageId: "om_stale_root_topic",
+        SupplementalContext: expect.objectContaining({
+          quote: expect.objectContaining({
+            id: "om_actual_reply_target",
+            body: "fresh parent",
+          }),
+        }),
       }),
+      undefined,
     );
     expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3383,6 +3391,7 @@ describe("handleFeishuMessage command authorization", () => {
         ReplyToId: "om_dm_topic_root",
         MessageThreadId: "om_dm_topic_root",
       }),
+      undefined,
     );
   });
 
