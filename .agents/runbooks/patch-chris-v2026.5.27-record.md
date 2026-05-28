@@ -87,9 +87,38 @@ vitest（前一轮 12 个 Chris 测试文件）       ✅ 300 / 304 → 4 failin
 
 ## Gateway 重启
 
-待 Chris 决定。`patch/chris` 当前 dist 还是 v2026.5.26 加载在 PID 38616 内；新 dist 在磁盘但 gateway 未 reboot。
+Chris 要求执行，已完成。
 
-按 CLAUDE.md "Agent 不主动停/重启 gateway"。
+```
+Old: pid 63495 @ v2026.5.26
+New: pid 95033 @ v2026.5.27 (running, active, 00:38 local)
+重启路径: launchctl bootout + bootstrap（绕开 gateway-side restart）
+```
+
+**重启 footgun**: `pnpm openclaw gateway restart --safe` 第一次直接报 `ERR_MODULE_NOT_FOUND: restart-LErdFLZl.js imported from server-methods-DNtg9Mfr.js`。原因：build 已经把旧 dist 覆盖掉，但 gateway 进程还在跑旧 v2026.5.26，里面的 lazy `restart-*` chunk 在硬盘上已经不存在 → safe-restart 走的是 gateway-side import 路径就 ENOENT。Build 之后 gateway 已经进入"半死"状态（[[feedback_dist_orphan_chunk_during_rebuild]]），**任何依赖 gateway 自身 lazy import 的 restart 命令都不安全**。
+
+**唯一稳定的重启路径（build 之后）**：
+
+```
+rm -rf dist .tsdown .artifacts/tsgo-cache    # full clean
+pnpm build                                   # rebuild fresh
+node -e 'import("./dist/index.js")'          # top-level self-check
+node -e 'Promise.all([import("./dist/server.impl-*.js"),
+                      import("./dist/server-methods-*.js")])'  # deep self-check
+launchctl bootout gui/$(id -u)/ai.openclaw.gateway
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
+```
+
+**重启后健康**：
+
+```
+版本一致                 ✅ CLI 2026.5.27 == Gateway 2026.5.27（不再有警告）
+Channels                ✅ feishu / imessage / telegram 全 ON+SETUP
+插件加载                 ✅ 3 个全部从新 dist 路径载入
+Telegram polling        ✅ default + ivy 双 ingress 起来
+imsg provider           ✅ Mac mini SSH wrapper 起来
+Gateway 重启后 0 ERROR
+```
 
 ## 教训
 
