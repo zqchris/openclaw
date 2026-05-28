@@ -30,6 +30,11 @@
       "label": "Dreaming Excluded Agents",
       "placeholder": "email",
       "help": "Optional agent ids to leave out of scheduled dreaming sweeps while keeping normal memory and transcripts."
+    },
+    "dreaming.excludeGroupIds": {
+      "label": "Dreaming Excluded Group IDs",
+      "placeholder": "-1003787571927",
+      "help": "Optional channel group ids whose sessions are skipped by scheduled dreaming sweeps. Matches the `:group:<id>` token in session keys (Telegram chat ids, Feishu group ids, iMessage group chat guids). Useful for notification-only groups that pollute dream signal."
     }
   },
   "configSchema": {
@@ -53,6 +58,12 @@
             "type": "string"
           },
           "excludeAgents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeGroupIds": {
             "type": "array",
             "items": {
               "type": "string"
