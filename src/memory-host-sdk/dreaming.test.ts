@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   formatMemoryDreamingDay,
+  isExcludedGroupSessionKey,
   isSameMemoryDreamingDay,
   resolveMemoryDreamingPluginConfig,
   resolveMemoryDreamingPluginId,
@@ -377,6 +378,99 @@ describe("memory dreaming host helpers", () => {
       dreaming: {
         enabled: true,
       },
+    });
+  });
+
+  describe("isExcludedGroupSessionKey", () => {
+    it("returns false when no group ids are configured", () => {
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:group:-1003787571927:topic:1", []),
+      ).toBe(false);
+    });
+
+    it("returns false for a null or empty session key", () => {
+      expect(isExcludedGroupSessionKey(null, ["-1003787571927"])).toBe(false);
+      expect(isExcludedGroupSessionKey("", ["-1003787571927"])).toBe(false);
+      expect(isExcludedGroupSessionKey(undefined, ["-1003787571927"])).toBe(false);
+    });
+
+    it("matches a bare telegram group session key", () => {
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:group:-1003787571927", ["-1003787571927"]),
+      ).toBe(true);
+    });
+
+    it("matches a telegram group + topic session key", () => {
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:group:-1003787571927:topic:277", [
+          "-1003787571927",
+        ]),
+      ).toBe(true);
+    });
+
+    it("matches when account scope appears between channel and group", () => {
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:default:group:-1003787571927:topic:1", [
+          "-1003787571927",
+        ]),
+      ).toBe(true);
+    });
+
+    it("does not match direct or thread-only session keys", () => {
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:direct:435427284", ["-1003787571927"]),
+      ).toBe(false);
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:direct:435427284:thread:300118", [
+          "-1003787571927",
+        ]),
+      ).toBe(false);
+    });
+
+    it("does not match a different group id with overlapping suffix", () => {
+      // Substring guard: -1003787571927 must not match -71003787571927.
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:group:-71003787571927:topic:1", [
+          "-1003787571927",
+        ]),
+      ).toBe(false);
+    });
+
+    it("matches feishu / imessage group ids preserving case", () => {
+      expect(
+        isExcludedGroupSessionKey(
+          "agent:filomail:feishu:group:oc_a2a01ae2049917a984851cab73213b88",
+          ["oc_a2a01ae2049917a984851cab73213b88"],
+        ),
+      ).toBe(true);
+      expect(
+        isExcludedGroupSessionKey("agent:social:imessage:group:any;+;chat240698944142298252", [
+          "any;+;chat240698944142298252",
+        ]),
+      ).toBe(true);
+    });
+
+    it("supports multiple excluded ids", () => {
+      const ids = ["-1003787571927", "oc_a2a01ae2049917a984851cab73213b88"];
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:group:-1003787571927:topic:1", ids),
+      ).toBe(true);
+      expect(
+        isExcludedGroupSessionKey(
+          "agent:filomail:feishu:group:oc_a2a01ae2049917a984851cab73213b88",
+          ids,
+        ),
+      ).toBe(true);
+      expect(isExcludedGroupSessionKey("agent:main:telegram:group:-9999999999", ids)).toBe(false);
+    });
+
+    it("ignores empty entries in the exclude list", () => {
+      expect(
+        isExcludedGroupSessionKey("agent:main:telegram:group:-1003787571927:topic:1", [
+          "",
+          "-1003787571927",
+        ]),
+      ).toBe(true);
     });
   });
 });

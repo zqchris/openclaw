@@ -130,6 +130,7 @@ export type MemoryDreamingConfig = {
   frequency: string;
   timezone?: string;
   excludeAgents: string[];
+  excludeGroupIds: string[];
   verboseLogging: boolean;
   storage: MemoryDreamingStorageConfig;
   execution: {
@@ -278,6 +279,23 @@ function normalizeAgentIdArray(value: unknown): string[] {
   return normalized;
 }
 
+// Group IDs preserve case (Telegram negative numbers, Feishu oc_*, iMessage chat
+// guids). Just trim + dedupe, no lowercase coercion.
+function normalizeGroupIdArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const normalized: string[] = [];
+  for (const entry of value) {
+    const trimmed = typeof entry === "string" ? entry.trim() : "";
+    if (!trimmed || normalized.includes(trimmed)) {
+      continue;
+    }
+    normalized.push(trimmed);
+  }
+  return normalized;
+}
+
 function normalizeStorageMode(value: unknown): MemoryDreamingStorageMode {
   const normalized = normalizeOptionalLowercaseString(value);
   if (normalized === "inline" || normalized === "separate" || normalized === "both") {
@@ -409,6 +427,7 @@ export function resolveMemoryDreamingConfig(params: {
     frequency,
     ...(timezone ? { timezone } : {}),
     excludeAgents: normalizeAgentIdArray(dreaming?.excludeAgents),
+    excludeGroupIds: normalizeGroupIdArray(dreaming?.excludeGroupIds),
     verboseLogging: normalizeBoolean(
       dreaming?.verboseLogging,
       DEFAULT_MEMORY_DREAMING_VERBOSE_LOGGING,
@@ -623,6 +642,42 @@ export function isSameMemoryDreamingDay(
     formatMemoryDreamingDay(firstEpochMs, timezone) ===
     formatMemoryDreamingDay(secondEpochMs, timezone)
   );
+}
+
+/**
+ * Returns true when the session key targets a group whose id appears in
+ * `excludeGroupIds`. Matches the canonical `:group:<id>` token from session
+ * keys produced by the channels layer (Telegram `:group:<chatId>[:topic:...]`,
+ * Feishu `:group:<chatId>[:topic:...]`, iMessage `:group:<chatGuid>`).
+ *
+ * Direct sessions, threads, subagent runs, and any key without a `:group:<id>`
+ * token return false — only channel group sessions are skipped.
+ */
+export function isExcludedGroupSessionKey(
+  sessionKey: string | null | undefined,
+  excludeGroupIds: readonly string[],
+): boolean {
+  if (!sessionKey || excludeGroupIds.length === 0) {
+    return false;
+  }
+  for (const groupId of excludeGroupIds) {
+    if (!groupId) {
+      continue;
+    }
+    const marker = `:group:${groupId}`;
+    const index = sessionKey.indexOf(marker);
+    if (index < 0) {
+      continue;
+    }
+    const after = sessionKey.charAt(index + marker.length);
+    // Exact match (key ends with `:group:<id>`) or followed by another `:` segment
+    // (`:group:<id>:topic:...`). Reject partial matches that would catch a
+    // longer group id ending with our id as substring.
+    if (after === "" || after === ":") {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function resolveMemoryDreamingWorkspaces(
