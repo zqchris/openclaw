@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { resolveSessionTranscriptsDirForAgent } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
 import {
   buildSessionEntry,
   listSessionFilesForAgent,
@@ -13,6 +14,9 @@ import {
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-core-host-runtime-files";
 import {
   formatMemoryDreamingDay,
+  isExcludedGroupSessionKey,
+  resolveMemoryDreamingConfig,
+  resolveMemoryDreamingPluginConfig,
   resolveMemoryDreamingWorkspaces,
   resolveMemoryLightDreamingConfig,
   resolveMemoryRemDreamingConfig,
@@ -672,6 +676,77 @@ function isCheckpointSessionTranscriptPath(absolutePath: string): boolean {
   return SESSION_CHECKPOINT_TRANSCRIPT_FILENAME_RE.test(path.basename(absolutePath));
 }
 
+/**
+ * Build the set of normalized transcript paths whose session keys reference
+ * any group id in `excludeGroupIds`. Reads `sessions.json` for the agent and
+ * matches keys via {@link isExcludedGroupSessionKey}.
+ *
+ * Returns an empty set when `excludeGroupIds` is empty, when the store is
+ * missing or malformed, or when an entry has no resolvable transcript path.
+ */
+async function buildExcludedGroupTranscriptPathsForAgent(
+  agentId: string,
+  excludeGroupIds: readonly string[],
+): Promise<Set<string>> {
+  const excluded = new Set<string>();
+  if (excludeGroupIds.length === 0) {
+    return excluded;
+  }
+  const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId);
+  const storePath = path.join(sessionsDir, "sessions.json");
+  let raw: string;
+  try {
+    raw = await fs.readFile(storePath, "utf-8");
+  } catch {
+    return excluded;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return excluded;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return excluded;
+  }
+  const store = parsed as Record<string, unknown>;
+  for (const [sessionKey, value] of Object.entries(store)) {
+    if (!isExcludedGroupSessionKey(sessionKey, excludeGroupIds)) {
+      continue;
+    }
+    const entry = asRecord(value) ?? undefined;
+    const transcriptPath = resolveExcludedSessionTranscriptPath(sessionsDir, entry);
+    if (transcriptPath) {
+      excluded.add(transcriptPath);
+    }
+  }
+  return excluded;
+}
+
+/**
+ * Mirrors {@link resolveSessionStoreTranscriptPath} from the SDK
+ * (`packages/memory-host-sdk/src/host/session-files.ts`). Kept local because
+ * the SDK helper is not exported; behaviour stays in lock-step intentionally.
+ */
+function resolveExcludedSessionTranscriptPath(
+  sessionsDir: string,
+  entry: Record<string, unknown> | undefined,
+): string | null {
+  const sessionFile = entry?.sessionFile;
+  if (typeof sessionFile === "string" && sessionFile.trim().length > 0) {
+    const trimmed = sessionFile.trim();
+    const resolved = path.isAbsolute(trimmed) ? trimmed : path.resolve(sessionsDir, trimmed);
+    return normalizeSessionTranscriptPathForComparison(resolved);
+  }
+  const sessionId = entry?.sessionId;
+  if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+    return normalizeSessionTranscriptPathForComparison(
+      path.join(sessionsDir, `${sessionId.trim()}.jsonl`),
+    );
+  }
+  return null;
+}
+
 function buildSessionRenderedLine(params: {
   agentId: string;
   sessionPath: string;
@@ -778,6 +853,13 @@ async function collectSessionIngestionBatches(params: {
     workspaceDir: params.workspaceDir,
     primaryWorkspaceDir: params.primaryWorkspaceDir,
   });
+  // Resolve `excludeGroupIds` from plugin config once per call. Empty array
+  // (default) makes the per-agent path lookup below a no-op cheap.
+  const dreamingConfig = resolveMemoryDreamingConfig({
+    pluginConfig: resolveMemoryDreamingPluginConfig(params.cfg as never),
+    cfg: params.cfg as never,
+  });
+  const excludeGroupIds = dreamingConfig.excludeGroupIds;
   const cutoffMs = calculateLookbackCutoffMs(params.nowMs, params.lookbackDays);
   const batchByDay = new Map<string, SessionIngestionMessage[]>();
   const nextFiles: Record<string, SessionIngestionFileState> = {};
@@ -800,11 +882,20 @@ async function collectSessionIngestionBatches(params: {
             dreamingNarrativeTranscriptPaths: new Set<string>(),
             cronRunTranscriptPaths: new Set<string>(),
           };
+    const excludedGroupTranscriptPaths = await buildExcludedGroupTranscriptPathsForAgent(
+      agentId,
+      excludeGroupIds,
+    );
     for (const absolutePath of files) {
       if (isCheckpointSessionTranscriptPath(absolutePath)) {
         continue;
       }
       const normalizedPath = normalizeSessionTranscriptPathForComparison(absolutePath);
+      if (excludedGroupTranscriptPaths.has(normalizedPath)) {
+        // Session targets a channel group listed in
+        // `plugins.entries.memory-core.config.dreaming.excludeGroupIds`.
+        continue;
+      }
       sessionFiles.push({
         agentId,
         absolutePath,
