@@ -1423,6 +1423,31 @@ export async function handleFeishuMessage(params: {
       return threadContext;
     };
 
+    // Determine reply target based on group session mode (moved up from the
+    // outbound dispatch path so buildCtxPayloadForAgent's inbound context can
+    // thread `messageThreadId` via the same resolved target):
+    // - Topic-mode groups (group_topic / group_topic_sender) and explicit
+    //   replyInThread configs target the topic root so the bot stays in-thread.
+    // - Normal groups (auto-detected threadReply from root_id): reply to the
+    //   triggering message itself. Using rootId here would silently push the
+    //   reply into a topic thread invisible in the main chat view (#32980).
+    // - Direct-message topics have no group config, so keep those replies tied
+    //   to the root topic instead of falling back to the top-level DM.
+    const isTopicSession =
+      isGroup &&
+      (groupSession?.groupSessionScope === "group_topic" ||
+        groupSession?.groupSessionScope === "group_topic_sender");
+    const configReplyInThread =
+      isGroup &&
+      (groupConfig?.replyInThread ?? feishuCfg?.replyInThread ?? "disabled") === "enabled";
+    const preferThreadRootReplyTarget = Boolean(
+      isTopicSession || configReplyInThread || (!isGroup && (ctx.rootId || ctx.threadId)),
+    );
+    const replyTargetMessageId = resolveFeishuSendReplyTargetMessageId({
+      ctx,
+      threaded: preferThreadRootReplyTarget,
+    });
+
     // --- Shared context builder for dispatch ---
     const buildCtxPayloadForAgent = async (
       agentId: string,
@@ -1436,7 +1461,13 @@ export async function handleFeishuMessage(params: {
         channel: "feishu",
         finalize: core.channel.reply.finalizeInboundContext,
         supplemental: {
-          quote: quotedContent ? { id: ctx.parentId, body: quotedContent } : undefined,
+          // Chris patch: quote.id maps to ReplyToId in inbound-context.
+          // Prefer reply_target_message_id over parent_id so reactions and
+          // outbound anchors land on the actual quoted message, not the
+          // immediate parent in the flat reply chain.
+          quote: quotedContent
+            ? { id: ctx.replyTargetMessageId ?? ctx.parentId, body: quotedContent }
+            : undefined,
           thread: {
             starterBody: threadContext.threadStarterBody,
             historyBody: threadContext.threadHistoryBody,
@@ -1471,7 +1502,19 @@ export async function handleFeishuMessage(params: {
           // and outbound anchors land on the actual quoted message in threaded
           // conversations, not the immediate parent in the flat reply chain.
           replyToId: ctx.replyTargetMessageId ?? ctx.parentId,
-          messageThreadId: ctx.rootId && isTopicSessionForThread ? ctx.rootId : undefined,
+          // Chris patch: thread the outbound reply to the resolved
+          // replyTargetMessageId when reply_in_thread is active. This handles:
+          //   - group_topic / group_topic_sender mode (Feishu hasn't surfaced
+          //     root_id yet for new topics — fall back to the message itself)
+          //   - explicit configReplyInThread groups
+          //   - DM topic replies (no group config; preserve topic anchor)
+          // Falls back to the upstream simple rootId+topicSession expression
+          // when not in a thread-reply mode.
+          messageThreadId: replyInThread
+            ? replyTargetMessageId
+            : ctx.rootId && isTopicSessionForThread
+              ? ctx.rootId
+              : undefined,
         },
         message: {
           body: combinedBody,
@@ -1497,40 +1540,25 @@ export async function handleFeishuMessage(params: {
       });
     };
 
-    // Determine reply target based on group session mode:
-    // - Topic-mode groups (group_topic / group_topic_sender) and explicit
-    //   replyInThread configs target the topic root so the bot stays in-thread.
-    // - Normal groups (auto-detected threadReply from root_id): reply to the
-    //   triggering message itself. Using rootId here would silently push the
-    //   reply into a topic thread invisible in the main chat view (#32980).
-    // - Direct-message topics have no group config, so keep those replies tied
-    //   to the root topic instead of falling back to the top-level DM.
-    const isTopicSession =
-      isGroup &&
-      (groupSession?.groupSessionScope === "group_topic" ||
-        groupSession?.groupSessionScope === "group_topic_sender");
-    const configReplyInThread =
-      isGroup &&
-      (groupConfig?.replyInThread ?? feishuCfg?.replyInThread ?? "disabled") === "enabled";
-    const preferThreadRootReplyTarget = Boolean(
-      isTopicSession || configReplyInThread || (!isGroup && (ctx.rootId || ctx.threadId)),
-    );
-    const replyTargetMessageId = resolveFeishuSendReplyTargetMessageId({
-      ctx,
-      threaded: preferThreadRootReplyTarget,
-    });
+    // (isTopicSession / configReplyInThread / preferThreadRootReplyTarget /
+    // replyTargetMessageId moved above buildCtxPayloadForAgent so the inbound
+    // context can thread `messageThreadId` via the same resolved target.)
     const typingTargetMessageId = resolveFeishuTypingTargetMessageId({
       ctx,
       threaded: preferThreadRootReplyTarget,
     });
-    // Match the actual Feishu reply target used for delivery. A top-level
-    // message can start a thread via reply_in_thread even when Feishu has not
-    // emitted a root_id yet; subagent completion must still return there.
-    const messageThreadId = replyInThread
-      ? replyTargetMessageId
-      : ctx.rootId && isTopicSessionForThread
-        ? ctx.rootId
-        : undefined;
+    // NOTE(chris-patch on v2026.5.27 rebase): the original patch defined
+    // `messageThreadId` here with smarter logic
+    //     replyInThread ? replyTargetMessageId
+    //                   : ctx.rootId && isTopicSessionForThread ? ctx.rootId : undefined
+    // and threaded it into the inbound context's MessageThreadId field. The
+    // v2026.5.27 inbound API moved that field into
+    // buildChannelInboundEventContext.reply.messageThreadId at the top of this
+    // function using the simpler `ctx.rootId && isTopicSessionForThread`
+    // expression inline (replyInThread + replyTargetMessageId aren't in scope
+    // there). The smarter case got dropped during rebase — revisit if a
+    // follow-up patch needs it. `lastRouteThreadId` below preserves the topic
+    // case for outbound routing.
     const threadReply = isGroup
       ? (groupSession?.threadReply ?? false)
       : Boolean(ctx.rootId || ctx.threadId);
