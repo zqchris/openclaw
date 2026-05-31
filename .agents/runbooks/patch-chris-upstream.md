@@ -109,7 +109,15 @@ openclaw --version
 
 ## 升级流程
 
-**核心原则：agent 不主动停/重启 gateway。** Gateway 是 Node 进程，启动时把 dist 加载进内存，运行期间**不再读 dist 文件**——所以改代码 / build / 覆盖 dist **不影响内存里跑的 gateway**。重启时机由 user 决定（user 可能正跑别的 agent / 群聊 reply / cron 工作，重启会切断）。
+**核心原则（2026-05-31 修订）：升级时让「dist 不一致窗口」尽量短，build 后尽快重启 + 预热。**
+
+Gateway 启动时把 dist 加载进内存，**已加载的静态模块** build 确实不影响——但运行期它仍会**按需 lazy/dynamic import dist**（plugin 加载、惰性 chunk、hook 路径）。所以 `trash dist && pnpm build` 之后，老 gateway 进入「borrowed time」：下一次它 lazy import 一个新 hash 的 chunk 就 `ERR_MODULE_NOT_FOUND` 崩，触发源可以是任意东西——cron、health probe、`pnpm openclaw` 命令、**甚至 user 自己发一条消息**。
+
+因此**不要**把老 gateway 长时间晾在这个窗口里（这正是「build 完无限期等 user 手动重启」的隐患：窗口拉长、user 自己发消息都可能撞崩、首条消息还吃冷启动）。合理做法：
+
+- build + step 5.5 纯 node import 自检通过后，**主动、尽快重启到新 dist，并做一次预热**（见 step 7），把窗口压到秒级。
+- 重启挑低打扰时机：先看有没有 inflight session（`status` / 看 agent 活动）。没有就直接重启；拿不准就**快速问一句**，而不是默认「永不重启」。
+- 旧的「agent 绝不主动重启 gateway」是过度死板的规则，已退役。重启是升级的正常收尾，不是危险禁区——前提是 build 干净 + 自检通过 + 时机合理。
 
 ### ⚠️ dist 一致性规则
 
@@ -131,7 +139,7 @@ openclaw --version
    # 做完
    cd ~/Github/openclaw && git worktree remove .claude/worktrees/pr-<name>
    ```
-2. **主 tree 升级/cherry-pick 后 build**: 直接 `trash dist && pnpm build`，**不停 gateway**。注意 build 期间不要改 config / enable plugin（避免 gateway dynamic import 撞上半残 dist）。Build 完成 + step 5.5 自检 → 报告 user，由 user 决定何时重启 gateway。
+2. **主 tree 升级/cherry-pick 后 build**: 直接 `trash dist && pnpm build`。build 期间别改 config / enable plugin（避免 gateway dynamic import 撞上半残 dist）。Build 完成 + step 5.5 自检 → **尽快重启到新 dist + 预热**（step 7），别把老 gateway 长时间晾在 borrowed-time 窗口。
 
 ### 1. 准备（只读 + 标桩，不碰运行环境）
 
@@ -268,7 +276,7 @@ git rebase main
 
 ### 5. Build + 验证（**不停 gateway**）
 
-Gateway 跑期间 build 是安全的——内存里的 gateway 不读 dist 文件，build 覆盖 dist 不影响它。Build 完成后 dist 是新版本，等 user 重启时才会被加载。
+Gateway 跑期间 build 对**已加载的静态模块**安全；但运行期它仍会 lazy/dynamic import dist，build 后老 gateway 进入 borrowed-time（见核心原则）。所以 build 完别久等——尽快重启到新 dist。
 
 ⚠️ **build 期间避免**：不要触发 plugin 动态加载 / config 改动 / `pnpm openclaw ...` 命令——这些可能让 gateway 临时 dynamic import dist 文件，撞上半残的 build 中间状态。
 
@@ -430,21 +438,23 @@ pnpm openclaw xxx status
 
 **重要**：不要只说"兼容"就跳过。新功能如果对用户有价值，必须主动推荐。
 
-### 7. 报告 user，等 user 重启（agent 不主动重启）
+### 7. 重启到新 dist + 预热（尽快，挑低打扰时机）
 
-**Build + 自检完成后停下**，向 user 汇报：
+Build + 自检通过后**不要无限期晾着**（见核心原则的 borrowed-time 窗口）。判断时机后主动重启：
 
-> Build done, dist OK（step 5.5 import 自检通过）。Gateway 重启时机你定（你可能正跑别的 agent / 群聊 reply / cron 工作，重启会切断 inflight session）。
-> 重启命令：
->
-> ```bash
-> launchctl bootout gui/$(id -u)/ai.openclaw.gateway
-> launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
-> ```
->
-> 你重启后告诉我，我来核对版本。
+- 先看有没有 inflight session（`pnpm openclaw status` / agent 近期活动）。空闲就直接重启；user 明显正用就快速问一句再动。
+- 重启命令：
 
-**user 重启后**，agent 做版本验证：
+  ```bash
+  launchctl bootout gui/$(id -u)/ai.openclaw.gateway
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
+  ```
+
+- 重启后**预热**，避免 user 首条消息吃冷启动：首次新版启动自动 stage plugin deps（~10s）；再跑一遍 `channels status --probe` 暖频道路径；codex agent 首轮 app-server 冷启动可能 ~5min（见 memory `feedback_cold_start_normal`），值得时给常用 agent 发一条 no-op turn 预热。
+
+> 注：`doctor --fix` 若检测到 gateway erroring 会**自己重启**它——等于替你完成重启，可控但要知道会发生。
+
+**重启后**，agent 做版本验证：
 
 ```bash
 sleep 10
