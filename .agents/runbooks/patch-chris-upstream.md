@@ -348,7 +348,7 @@ node scripts/stage-bundled-plugin-runtime.mjs
 trash dist dist-runtime && pnpm build
 ```
 
-⛔ **不要用 `pnpm openclaw doctor --fix` 修这个**。这台机上 `doctor --fix` 会把刻意配的 pi + openai-codex/gpt-5.5 多 provider fallback 链强迁掉，副作用大于收益。
+⛔ **不要用 `pnpm openclaw doctor --fix` 修这个** —— 不是因为 --fix 危险（2026-05-29 起 --fix 已安全，见 step 6），而是因为 doctor --fix 改的是 config，根本不碰 dist。修 dist orphan-chunk 只能 `trash dist && pnpm build`。
 
 `runtime-postbuild` 步骤在 `pnpm build` 流程里（`scripts/build-all.mjs` BUILD_ALL_STEPS），调用 `stageBundledPluginRuntime()`，把 `dist/extensions/<id>/` 的 manifest + 入口 stage 到 `dist-runtime/extensions/<id>/`，并 symlink node_modules。**正常情况 build 完就有 dist-runtime**，只有 build 流程被打断（lock 冲突、ENOTEMPTY 等）才会缺。
 
@@ -400,11 +400,12 @@ head -200 CHANGELOG.md
 **b) 检查新功能的默认启用状态（只读）**
 
 ```bash
-pnpm openclaw doctor              # 配置健康 + 迁移提示，只读看输出
+pnpm openclaw doctor              # 配置健康 + 迁移提示
+pnpm openclaw doctor --fix        # 2026-05-29 起安全，可直接跑（见下）
 pnpm openclaw config get plugins  # 检查新插件是否已注册但未启用
 ```
 
-⛔ **不要跑 `pnpm openclaw doctor --fix`**。这台机上 doctor --fix 会强迁 pi + openai-codex/gpt-5.5 多 provider fallback 配置，把刻意配的多 provider 链条平掉。具体迁移项用 `config set` 一条一条单点改。
+✅ **`pnpm openclaw doctor --fix` 现在可以跑（2026-05-29 起）**。历史上 --fix 会把刻意配的 pi + openai-codex/gpt-5.5 多 provider fallback 链强迁成 codex + openai/\*，所以一度禁用；但迁移早已完成，8 个 agentRuntime 全在 codex 上，没东西可被破坏了。详见 memory `doctor_fix_caveat`。拿不准时仍可先看 doctor 无 `--fix` 的输出再决定 apply。**注意**：若未来某个 doctor 版本引入了**新的**破坏性迁移，那是另一回事，单独评估，别跟这条历史规则混淆。
 
 **c) 向用户汇报新功能清单，格式如下**：
 
@@ -562,8 +563,8 @@ pnpm openclaw config set cron.enabled true
 
 1. `launchctl print gui/$(id -u)/ai.openclaw.gateway` 看状态
 2. `tail -20 ~/.openclaw/logs/gateway.err.log` 看错误
-3. `pnpm openclaw doctor` 自动诊断（**只读，不要加 `--fix`**）
-4. 看到具体问题用 `config set` 单点改
+3. `pnpm openclaw doctor` 自动诊断；`--fix` 2026-05-29 起安全，可直接加
+4. 仍想精细控制时，看到具体问题用 `config set` 单点改
 
 ### Memory 不可用
 
@@ -604,4 +605,5 @@ pnpm openclaw config set cron.enabled true
 4. `git push --force`
 5. 升级版本/切换 tag
 6. 修改 `cron/jobs.json`
-7. `pnpm openclaw doctor --fix` —— 这台机上会强迁 pi + openai-codex/gpt-5.5 多 provider 配置
+
+（曾经的第 7 条「doctor --fix」已移除：2026-05-29 起 --fix 在这台机上安全，不再属于危险硬锁。见 step 6 / memory `doctor_fix_caveat`。）
