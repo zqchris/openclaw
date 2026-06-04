@@ -1158,7 +1158,7 @@ export async function handleFeishuMessage(params: {
           if (quotedMessageInfo.mediaKeys) {
             await tryDownloadReferencedMessageMedia({
               messageInfo: quotedMessageInfo,
-              fallbackMessageId: quotedMessageId,
+              fallbackMessageId: ctx.parentId,
               label: "quoted",
             });
           }
@@ -1283,7 +1283,7 @@ export async function handleFeishuMessage(params: {
           // target — its media has already been pulled into mediaList above.
           // The per-key cache would also short-circuit it, but skipping early
           // keeps logs clean.
-          ctx.rootId !== quotedMessageId
+          ctx.rootId !== ctx.parentId
         ) {
           await tryDownloadReferencedMessageMedia({
             messageInfo: rootMessageInfo,
