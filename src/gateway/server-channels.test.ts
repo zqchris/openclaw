@@ -281,6 +281,44 @@ describe("server-channels auto restart", () => {
     expect(account?.lastError).toBe("channel exited without an error");
   });
 
+  it("resets auto-restart attempts after a recovered channel stays running", async () => {
+    let startCount = 0;
+    const startAccount = vi.fn(async (ctx: ChannelGatewayContext<TestAccount>) => {
+      startCount += 1;
+      if (startCount === 1) {
+        return;
+      }
+      ctx.setStatus({
+        ...ctx.getStatus(),
+        accountId: ctx.accountId,
+        lastStartAt: Date.now(),
+      });
+      await new Promise<void>((resolve) => {
+        ctx.abortSignal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    });
+    installTestRegistry(createTestPlugin({ startAccount }));
+    const manager = createManager();
+
+    await manager.startChannels();
+    await vi.advanceTimersByTimeAsync(10);
+    await flushMicrotasks();
+
+    let account = manager.getRuntimeSnapshot().channelAccounts.discord?.[DEFAULT_ACCOUNT_ID];
+    expect(startAccount).toHaveBeenCalledTimes(2);
+    expect(account?.running).toBe(true);
+    expect(account?.reconnectAttempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await flushMicrotasks();
+
+    account = manager.getRuntimeSnapshot().channelAccounts.discord?.[DEFAULT_ACCOUNT_ID];
+    expect(account?.running).toBe(true);
+    expect(account?.reconnectAttempts).toBe(0);
+
+    await manager.stopChannel("discord", DEFAULT_ACCOUNT_ID);
+  });
+
   it("does not record a clean-exit error for manual abort stops", async () => {
     const startAccount = vi.fn(
       async ({ abortSignal }: { abortSignal: AbortSignal }) =>
