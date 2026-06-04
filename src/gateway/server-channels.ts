@@ -38,6 +38,7 @@ const CHANNEL_RESTART_POLICY: BackoffPolicy = {
   jitter: 0.1,
 };
 const MAX_RESTART_ATTEMPTS = 10;
+const RESTART_ATTEMPT_RESET_AFTER_MS = 10 * 60_000;
 const CHANNEL_STOP_ABORT_TIMEOUT_MS = 5_000;
 const CHANNEL_STARTUP_CONCURRENCY = 4;
 
@@ -50,6 +51,7 @@ function waitForChannelStartupHandoff(): Promise<void> {
 
 type ChannelRuntimeStore = {
   aborts: Map<string, AbortController>;
+  generations: Map<string, symbol>;
   starting: Map<string, Promise<void>>;
   tasks: Map<string, Promise<unknown>>;
   runtimes: Map<string, ChannelAccountSnapshot>;
@@ -72,6 +74,7 @@ type GatewayStartupTrace = {
 function createRuntimeStore(): ChannelRuntimeStore {
   return {
     aborts: new Map(),
+    generations: new Map(),
     starting: new Map(),
     tasks: new Map(),
     runtimes: new Map(),
@@ -530,16 +533,36 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           } catch (error) {
             log.error?.(`[${id}] native approval bootstrap failed: ${formatErrorMessage(error)}`);
           }
+          const accountStartAt = Date.now();
+          const startGeneration = Symbol(`${channelId}:${id}`);
+          let restartAttemptResetTimer: ReturnType<typeof setTimeout> | undefined;
+          store.generations.set(id, startGeneration);
           setRuntime(channelId, id, {
             accountId: id,
             enabled: true,
             configured: true,
             running: true,
             restartPending: false,
-            lastStartAt: Date.now(),
+            lastStartAt: accountStartAt,
             lastError: null,
             reconnectAttempts: preserveRestartAttempts ? (restartAttempts.get(rKey) ?? 0) : 0,
           });
+          if (preserveRestartAttempts && (restartAttempts.get(rKey) ?? 0) > 0) {
+            restartAttemptResetTimer = setTimeout(() => {
+              restartAttemptResetTimer = undefined;
+              const current = getRuntime(channelId, id);
+              if (!current?.running || store.generations.get(id) !== startGeneration) {
+                return;
+              }
+              restartAttempts.delete(rKey);
+              setRuntime(channelId, id, {
+                accountId: id,
+                reconnectAttempts: 0,
+              });
+              log.info?.(`[${id}] reset auto-restart attempts after stable run`);
+            }, RESTART_ATTEMPT_RESET_AFTER_MS);
+            restartAttemptResetTimer.unref?.();
+          }
           const task = Promise.resolve().then(async () => {
             if (opts.deferAccountStartUntil) {
               await waitForDeferredAccountStart(opts.deferAccountStartUntil, abort.signal);
@@ -585,12 +608,19 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               log.error?.(`[${id}] channel exited: ${message}`);
             })
             .finally(async () => {
+              if (restartAttemptResetTimer) {
+                clearTimeout(restartAttemptResetTimer);
+                restartAttemptResetTimer = undefined;
+              }
               await cleanupTaskScopedApprovalRuntime("channel cleanup failed");
               setRuntime(channelId, id, {
                 accountId: id,
                 running: false,
                 lastStopAt: Date.now(),
               });
+              if (store.generations.get(id) === startGeneration) {
+                store.generations.delete(id);
+              }
             })
             .then(async () => {
               if (manuallyStopped.has(rKey)) {
