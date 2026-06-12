@@ -12,6 +12,18 @@
 
 升。6.6.6 是正式 tag,本轮上游带来 Control UI assets、gateway/auth/state、channel/provider/runtime 等当前本机可见收益。更新后本机 gateway 已运行 `2026.6.6`。
 
+## 新功能 / 上游收益
+
+本轮 release notes 和 `v2026.6.5..v2026.6.6` commit audit 显示的主要收益:
+
+- Security hardening: transcript/image redaction、sandbox bind/env denylist、MCP stdio env filtering、Codex HTTP guard、native search policy、loopback tool owner restriction、exec approval timeout fail-closed。
+- Telegram: account-scoped topic routing、block-mode preview chunk sizing、unauthorized DM 不进 cache/prompt、dispatch dedupe 迁到 SDK、`/compact` ack 可见性和 callback API 处理更稳。
+- iMessage: always-on inbound recovery、echo marker 持久化、block streaming、idle approval discovery skip、outbound transport hardening、startup diagnostics。
+- Browser/MCP: existing-session CDP endpoint、discovered WebSocket URL validation、Streamable HTTP loopback transport、OAuth/SSE Authorization header 修复。
+- Control UI/perf: startup catalog wait 移除、startup model metadata 复用、slash commands lazy load、first assistant event tracing、slow first reply warning。
+- Providers/agents: OpenRouter OAuth onboarding、Claude Fable 5 adaptive thinking、Codex compaction ownership修复、local models 跳过 guardian review、Gemma reasoning replay 保留。
+- Gateway/config/auth/update: config.patch array/replacePaths 修复、Gateway RPC timeout input 校验、SQLite auth migration verify、package gateway refresh/restart recovery。
+
 ## 补丁审计结果
 
 - 旧 6.5 生成物补丁 `a2cf2c0e48 chore: regen config metadata for v2026.6.5`: drop,改为重新生成 6.6.6 元数据。
@@ -36,6 +48,8 @@
 - `pnpm openclaw doctor --fix` 未成功迁掉该键,因为 last-known-good restore 后仍是旧键。
 - 已做最小本机迁移: 将该 account 的 `transport` 改名为 `sendTransport`,并保留 `openclaw.json.pre-v2026.6.6-sendTransport.*.bak` 备份。
 - 迁移后 `pnpm openclaw config validate`: OK。
+- 2026-06-13 补跑 `pnpm openclaw doctor --fix`: completed。实际变更包括 cron store normalize、plugin registry refresh。剩余为非阻断 warnings: filomail 空 auth JSON 未导入、4 个未引用 legacy Codex OAuth sidecar 保留、xAI OAuth expiring、orphan transcript files、明文 secret config / gateway LAN bind policy warning。
+- doctor 后复核: `pnpm openclaw config validate` OK; `pnpm openclaw health --json` OK; gateway/RPC 仍为 `2026.6.6`, configAudit OK, plugin drift 0。
 
 ## 验证
 
@@ -57,6 +71,7 @@
   - `pnpm openclaw gateway status --deep --json`: running, gateway/RPC `2026.6.6`, configAudit OK, no pluginVersionDrift
   - `pnpm openclaw channels status --probe --channel imessage --json`: configured/running/probe OK, private API available, eventLoop not degraded
   - `pnpm openclaw models status --json`: default `openai/gpt-5.5` resolves; xAI OAuth still reports expiring, same class of warning as before
+  - 2026-06-13 post-doctor: `pnpm openclaw health --json`: OK
 
 ## Autoreview note
 
