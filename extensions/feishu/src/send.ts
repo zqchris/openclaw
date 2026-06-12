@@ -402,7 +402,20 @@ function extractFeishuMessageMediaKeys(
   rawContent: string,
   msgType: string,
 ): FeishuMessageMediaKeys | undefined {
-  if (!FEISHU_MEDIA_MSG_TYPES.has(msgType) || !rawContent) {
+  if (!rawContent) {
+    return undefined;
+  }
+  if (msgType === "post") {
+    const { imageKeys, mediaKeys } = parsePostContent(rawContent);
+    if (imageKeys.length === 0 && mediaKeys.length === 0) {
+      return undefined;
+    }
+    return {
+      ...(imageKeys.length > 0 ? { imageKeys } : {}),
+      ...(mediaKeys.length > 0 ? { mediaKeys } : {}),
+    };
+  }
+  if (!FEISHU_MEDIA_MSG_TYPES.has(msgType)) {
     return undefined;
   }
   const keys = parseFeishuMediaKeys(rawContent, msgType);

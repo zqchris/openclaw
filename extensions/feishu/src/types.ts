@@ -68,6 +68,8 @@ export type FeishuMessageMediaKeys = {
   imageKey?: string;
   fileKey?: string;
   fileName?: string;
+  imageKeys?: string[];
+  mediaKeys?: Array<{ fileKey: string; fileName?: string }>;
 };
 
 export type FeishuMessageInfo = {
@@ -83,10 +85,10 @@ export type FeishuMessageInfo = {
   /** Feishu thread ID (omt_xxx) — present when the message belongs to a topic thread. */
   threadId?: string;
   /**
-   * Raw image_key/file_key extracted from the message body for media types
-   * (image/file/audio/video/sticker/media). Allows callers to download the
-   * actual attachment when surfacing quoted/root/historical messages instead
-   * of falling back to a `<media:*>` text placeholder only.
+   * Raw image_key/file_key values extracted from media and rich-text post
+   * message bodies. Allows callers to download the actual attachment when
+   * surfacing quoted/root/historical messages instead of falling back to a
+   * `<media:*>` text placeholder only.
    */
   mediaKeys?: FeishuMessageMediaKeys;
 };
