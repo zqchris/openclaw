@@ -72,12 +72,17 @@
   - `pnpm openclaw channels status --probe --channel imessage --json`: configured/running/probe OK, private API available, eventLoop not degraded
   - `pnpm openclaw models status --json`: default `openai/gpt-5.5` resolves; xAI OAuth still reports expiring, same class of warning as before
   - 2026-06-13 post-doctor: `pnpm openclaw health --json`: OK
+- Changed gate:
+  - `pnpm changed:lanes --json`: lanes `all` because patch stack touches core/extensions/docs and `.agents/scripts/dream-cleanup-group-sessions.mjs` is unknown/fail-safe.
+  - `pnpm check:changed`: remote Blacksmith Testbox delegation failed because the local `crabbox` binary failed wrapper sanity checks.
+  - Local child fallback `env OPENCLAW_CHECK_CHANGED_REMOTE_CHILD=1 OPENCLAW_CHANGED_LANES_RAW_SYNC=1 CI=1 PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false pnpm check:changed`: OK; guards/typecheck/lint/runtime import cycles passed.
 
 ## Autoreview note
 
 - First branch autoreview completed and produced the two actionable items above; both were fixed.
 - Follow-up branch autoreview was attempted after fixes, but its bundle was ~187k chars and did not return after 10 minutes; it was interrupted to avoid blocking the update. A narrower follow-up attempt also built a similarly large bundle and was interrupted after user escalation.
-- Current proof is therefore targeted tests + generated checks + build/runtime probes + manual inspection of the two fixed findings, not a clean final autoreview pass.
+- 2026-06-13 final branch autoreview was retried with the full 30-minute patience window and parallel `check:changed`; bundle was 187502 chars. It still produced only heartbeat lines and no structured review result after 30 minutes, so it was interrupted and recorded as no clean final autoreview pass. The parallel `check:changed` remote delegation failed on `crabbox` wrapper sanity checks; local child fallback passed afterward.
+- Current proof is therefore targeted tests + generated checks + build/runtime probes + local child `check:changed` + manual inspection of the two fixed findings, not a clean final autoreview pass.
 
 ## 用户面 checklist
 
