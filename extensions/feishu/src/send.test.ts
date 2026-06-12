@@ -352,6 +352,53 @@ describe("getMessageFeishu", () => {
     });
   });
 
+  it("surfaces embedded media keys from post messages", async () => {
+    mockClientGet.mockResolvedValueOnce({
+      code: 0,
+      data: {
+        items: [
+          {
+            message_id: "om_post_media",
+            chat_id: "oc_post_media",
+            msg_type: "post",
+            body: {
+              content: JSON.stringify({
+                zh_cn: {
+                  title: "Summary",
+                  content: [
+                    [
+                      { tag: "text", text: "post body" },
+                      { tag: "img", image_key: "img_post_1" },
+                      { tag: "media", file_key: "file_post_1", file_name: "clip.mp4" },
+                    ],
+                  ],
+                },
+              }),
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await getMessageFeishu({
+      cfg: {} as ClawdbotConfig,
+      messageId: "om_post_media",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        messageId: "om_post_media",
+        chatId: "oc_post_media",
+        contentType: "post",
+        content: "Summary\n\npost body![image][media]",
+        mediaKeys: {
+          imageKeys: ["img_post_1"],
+          mediaKeys: [{ fileKey: "file_post_1", fileName: "clip.mp4" }],
+        },
+      }),
+    );
+  });
+
   it("returns the <media:*> placeholder and surfaces mediaKeys for file messages", async () => {
     mockClientGet.mockResolvedValueOnce({
       code: 0,

@@ -72,6 +72,79 @@ describe("resolveFeishuReferencedMessageMedia", () => {
     expect(saveMediaBufferMock).toHaveBeenCalledTimes(1);
   });
 
+  it("downloads every embedded post image and media resource within the shared budget", async () => {
+    const imageBuffer = Buffer.from("img");
+    const videoBuffer = Buffer.from("vid");
+    downloadMessageResourceFeishuMock
+      .mockResolvedValueOnce({
+        buffer: imageBuffer,
+        contentType: "image/png",
+      })
+      .mockResolvedValueOnce({
+        buffer: videoBuffer,
+        contentType: "video/mp4",
+      });
+    saveMediaBufferMock
+      .mockResolvedValueOnce({
+        path: "/media/inbound/img.png",
+        contentType: "image/png",
+      })
+      .mockResolvedValueOnce({
+        path: "/media/inbound/clip.mp4",
+        contentType: "video/mp4",
+      });
+
+    const out = await resolveFeishuReferencedMessageMedia({
+      cfg: {} as ClawdbotConfig,
+      messageId: "om_post_1",
+      messageType: "post",
+      mediaKeys: {
+        imageKeys: ["img_post_1"],
+        mediaKeys: [{ fileKey: "file_post_1", fileName: "clip.mp4" }],
+      },
+      maxBytes: 10,
+      accountId: "acct_a",
+    });
+
+    expect(out.media).toEqual([
+      {
+        path: "/media/inbound/img.png",
+        contentType: "image/png",
+        placeholder: "<media:image>",
+      },
+      {
+        path: "/media/inbound/clip.mp4",
+        contentType: "video/mp4",
+        placeholder: "<media:video>",
+      },
+    ]);
+    expect(out.downloadedBytes).toBe(imageBuffer.byteLength + videoBuffer.byteLength);
+    expect(downloadMessageResourceFeishuMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        fileKey: "img_post_1",
+        type: "image",
+        maxBytes: 10,
+      }),
+    );
+    expect(downloadMessageResourceFeishuMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        fileKey: "file_post_1",
+        type: "file",
+        maxBytes: 7,
+      }),
+    );
+    expect(saveMediaBufferMock).toHaveBeenNthCalledWith(
+      2,
+      videoBuffer,
+      "video/mp4",
+      "inbound",
+      7,
+      "clip.mp4",
+    );
+  });
+
   it("returns the cached media on a repeat call for the same image_key without re-downloading", async () => {
     const buf = Buffer.from("img-bytes");
     downloadMessageResourceFeishuMock.mockResolvedValueOnce({

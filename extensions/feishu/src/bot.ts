@@ -134,6 +134,19 @@ function isFeishuTopicSessionScope(scope: FeishuGroupSessionScope): boolean {
   return scope === "group_topic" || scope === "group_topic_sender";
 }
 
+function buildReferencedMediaFingerprint(mediaKeys: FeishuMessageMediaKeys): string {
+  return [
+    mediaKeys.imageKey ? `image:${mediaKeys.imageKey}` : undefined,
+    mediaKeys.fileKey ? `file:${mediaKeys.fileKey}` : undefined,
+    ...(mediaKeys.imageKeys ?? []).map((imageKey) => `image:${imageKey}`),
+    ...(mediaKeys.mediaKeys ?? []).map((media) =>
+      media.fileKey ? `file:${media.fileKey}` : undefined,
+    ),
+  ]
+    .filter((key): key is string => Boolean(key))
+    .join("|");
+}
+
 function evictGroupNameCache(): void {
   const now = asDateTimestampMs(Date.now());
   if (now === undefined) {
@@ -1053,6 +1066,7 @@ export async function handleFeishuMessage(params: {
     let historyMediaBudgetWarned = false;
     let referencedMediaDownloadQueue: Promise<void> = Promise.resolve();
     const referencedMediaPromises = new Map<string, Promise<FeishuMediaInfo[]>>();
+    const referencedMediaPaths = new Set<string>();
     const enqueueReferencedMediaDownload = <T>(run: () => Promise<T>): Promise<T> => {
       const queued = referencedMediaDownloadQueue.then(run, run);
       referencedMediaDownloadQueue = queued.then(
@@ -1071,11 +1085,11 @@ export async function handleFeishuMessage(params: {
       if (!mediaKeys) {
         return [];
       }
-      const fileKey = mediaKeys.fileKey || mediaKeys.imageKey;
-      if (!fileKey) {
+      const mediaFingerprint = buildReferencedMediaFingerprint(mediaKeys);
+      if (!mediaFingerprint) {
         return [];
       }
-      const appendKey = `${account.accountId}:${fileKey}`;
+      const appendKey = `${account.accountId}:${mediaFingerprint}`;
       const existingPromise = referencedMediaPromises.get(appendKey);
       if (existingPromise) {
         return existingPromise;
@@ -1114,8 +1128,15 @@ export async function handleFeishuMessage(params: {
           label,
         });
         historyMediaBudgetUsed += downloadedBytes;
-        if (media.length > 0) {
-          mediaList.push(...media);
+        const freshMedia = media.filter((entry) => {
+          if (referencedMediaPaths.has(entry.path)) {
+            return false;
+          }
+          referencedMediaPaths.add(entry.path);
+          return true;
+        });
+        if (freshMedia.length > 0) {
+          mediaList.push(...freshMedia);
         }
         return media;
       });
