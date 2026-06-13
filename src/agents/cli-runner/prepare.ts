@@ -27,6 +27,7 @@ import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
 import { resolveSkillsPromptForRun } from "../../skills/loading/workspace.js";
 import { resolveUserPath } from "../../utils.js";
+import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import { resolveAgentDir, resolveSessionAgentIds } from "../agent-scope.js";
 import { externalCliDiscoveryForProviderAuth } from "../auth-profiles/external-cli-discovery.js";
 import { loadAuthProfileStoreForRuntime } from "../auth-profiles/store.js";
@@ -65,6 +66,7 @@ import { composeSystemPromptWithHookContext } from "../embedded-agent-runner/run
 import { buildCurrentInboundPrompt } from "../embedded-agent-runner/run/runtime-context-prompt.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../heartbeat-system-prompt.js";
 import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
+import { collectRuntimeChannelCapabilities } from "../runtime-capabilities.js";
 import { ensureSystemPromptCacheBoundary } from "../system-prompt-cache-boundary.js";
 import { buildSystemPromptReport } from "../system-prompt-report.js";
 import { appendModelIdentitySystemPrompt, buildModelIdentityPromptLine } from "../system-prompt.js";
@@ -457,6 +459,12 @@ export async function prepareCliRunContext(
     agentId: sessionAgentId,
   });
   const systemPromptSkillsPrompt = claudeSkillsPlugin.args.length > 0 ? "" : skillsPrompt;
+  const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
+  const runtimeCapabilities = collectRuntimeChannelCapabilities({
+    cfg: params.config,
+    channel: runtimeChannel,
+    accountId: params.agentAccountId,
+  });
   const builtSystemPrompt = buildCliAgentSystemPrompt({
     workspaceDir,
     cwd,
@@ -465,6 +473,9 @@ export async function prepareCliRunContext(
     extraSystemPrompt,
     sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
     silentReplyPromptMode: params.silentReplyPromptMode,
+    runtimeChannel,
+    runtimeChatType: params.sessionEntry?.chatType,
+    runtimeCapabilities,
     ownerNumbers: params.ownerNumbers,
     heartbeatPrompt,
     docsPath: openClawReferences.docsPath ?? undefined,
