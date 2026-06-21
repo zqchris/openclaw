@@ -56,12 +56,12 @@
 - `pnpm openclaw doctor`: exit 0,只读完成。
 - 本轮没有跑 `doctor --fix`,避免把升级和状态迁移混在一起。
 - Doctor 剩余非阻断 warnings:
-  - filomail `models.json` custom model entry 缺 `apiKey`。
-  - xAI OAuth expired。
-  - legacy Telegram state / orphan transcripts 可迁移或归档。
-  - cron store 仍有 isolated shell/process tool normalization 提示。
-  - gateway service plist 仍标记 installed by `2026.6.8`,但 entrypoint 指向当前 source checkout 且 gateway 已运行 6.9。
-  - plaintext secret config / LAN bind policy warning 仍在。
+- filomail `models.json` custom model entry 缺 `apiKey`。
+- xAI OAuth expired。
+- legacy Telegram state / orphan transcripts 可迁移或归档。
+- cron store 仍有 isolated shell/process tool normalization 提示。
+- plaintext secret config / LAN bind policy warning 仍在。
+- 初次 doctor 提示 gateway service plist still installed by `2026.6.8`;随后 `pnpm openclaw gateway install --force --json` 已更新 service metadata 到 `v2026.6.9`。
 
 ## 验证
 
@@ -78,17 +78,22 @@
   - `dist-runtime/extensions/litellm/openclaw.plugin.json`: present。
   - `node --input-type=module -e 'await import("./dist/index.js")'`: OK。
   - `node -e 'console.log(require("./package.json").version)'`: `2026.6.9`。
-  - `pnpm openclaw config validate`: OK。
-  - `launchctl bootout gui/$(id -u)/ai.openclaw.gateway`: OK。
-  - First `launchctl bootstrap ...` returned `Bootstrap failed: 5`; service was not loaded and plist lint was OK. Immediate retry succeeded.
-  - launchd: state `running`, PID `1937`, last exit code `(never exited)`。
-  - `openclaw --version`: `OpenClaw 2026.6.9 (cc2fd49)`。
-  - gateway log: ready at `2026-06-21T19:23:05+08:00`; Feishu WebSocket ready; Telegram ingress started; iMessage provider started; provider/auth prewarm complete。
-  - `pnpm openclaw channels status --probe --channel imessage --json`: configured/running/probe OK; IMCore available; `retractMessagePart=true`; `sendRichSupportsAttachment=false`。
+- `pnpm openclaw config validate`: OK。
+- `launchctl bootout gui/$(id -u)/ai.openclaw.gateway`: OK。
+- First `launchctl bootstrap ...` returned `Bootstrap failed: 5`; service was not loaded and plist lint was OK. Immediate retry succeeded.
+- Initial launchd restart: state `running`, PID `1937`, last exit code `(never exited)`。
+- `openclaw --version`: `OpenClaw 2026.6.9 (cc2fd49)` before final runbook commit; `OpenClaw 2026.6.9 (51eeb48)` after runbook commit。
+- gateway log: ready at `2026-06-21T19:23:05+08:00`; Feishu WebSocket ready; Telegram ingress started; iMessage provider started; provider/auth prewarm complete。
+- `pnpm openclaw channels status --probe --channel imessage --json`: configured/running/probe OK; IMCore available; `retractMessagePart=true`; `sendRichSupportsAttachment=false`。
+- `pnpm openclaw gateway status --json` after final runbook commit triggered a source checkout stale-dist rebuild (`git_head_changed`) because `HEAD` moved from the metadata commit to the runbook commit.
+- `pnpm openclaw gateway install --force --json`: OK; updated LaunchAgent comment to `OpenClaw Gateway (v2026.6.9)` and restarted gateway.
+- Final launchd: state `running`, PID `3446`, last exit code `(never exited)`。
+- Final `pnpm openclaw gateway status --json`: RPC OK, gateway/server version `2026.6.9`, config valid, service `configAudit.ok=true`, plugin version drift empty。
+- Final `pnpm openclaw channels status --probe --channel imessage --json`: configured/running/probe OK; event loop not degraded; IMCore available; `retractMessagePart=true`; `sendRichSupportsAttachment=false`。
 
 ## 用户面 checklist
 
-- 已运行: gateway `2026.6.9 (cc2fd49)`, PID `1937`。
+- 已运行: gateway `2026.6.9`, PID `3446`; CLI/source HEAD `51eeb48`。
 - 本轮没有发现可完整 drop 的 runtime patch;旧生成物和被吸收的 Feishu id shim 已退役。
 - iMessage probe OK,事件循环未 degraded。
 - Doctor warnings 是既有维护项;本轮未执行 `doctor --fix`。
