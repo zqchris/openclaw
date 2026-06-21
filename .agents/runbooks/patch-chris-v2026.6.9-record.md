@@ -50,18 +50,33 @@
 - Added:
   - `cc2fd4912d chore: regen config metadata for v2026.6.9`
 
-## 本机配置迁移
+## 本机配置迁移 / doctor
 
 - `pnpm openclaw config validate`: OK。
 - `pnpm openclaw doctor`: exit 0,只读完成。
-- 本轮没有跑 `doctor --fix`,避免把升级和状态迁移混在一起。
+- `pnpm openclaw doctor --fix`: OK。实际修改: `~/.openclaw/cron/jobs.json` 已 normalization。
+- `pnpm openclaw config get plugins`: OK,输出只用于状态检查,不记录 secret-bearing config 原文。
 - Doctor 剩余非阻断 warnings:
 - filomail `models.json` custom model entry 缺 `apiKey`。
-- xAI OAuth expired。
+- xAI OAuth expiring in ~6h。
 - legacy Telegram state / orphan transcripts 可迁移或归档。
-- cron store 仍有 isolated shell/process tool normalization 提示。
+- filomail 空 `auth-profiles.json` 保留,因为 doctor 没找到可 import 的 profile/state。
+- 4 个 legacy Codex OAuth sidecar 保留,因为可能仍被 scan 外的 agent dir 引用。
+- 1289 个 orphan transcript files 可归档,doctor 本轮只提示不自动归档。
 - plaintext secret config / LAN bind policy warning 仍在。
 - 初次 doctor 提示 gateway service plist still installed by `2026.6.8`;随后 `pnpm openclaw gateway install --force --json` 已更新 service metadata 到 `v2026.6.9`。
+
+## 新功能默认状态 / 建议
+
+| 功能 / 修复                                                          | 默认状态                                                                   | 对本机价值                                                                      | 建议                            |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------- |
+| Telegram richer delivery / command output / HTML table normalization | Telegram plugin enabled                                                    | Telegram 输出、spool/final delivery 和命令交互路径更稳                          | 无需手动开启;观察真实消息即可   |
+| Agent recovery / terminal outcome / session repair                   | 默认运行路径                                                               | timeout/cancel/compaction 后恢复更稳                                            | 无需操作                        |
+| Codex integration / app-server teardown / tool approvals             | `codex` plugin enabled                                                     | Codex runtime 和 app-server 生命周期更稳                                        | 无需操作                        |
+| Official provider plugins                                            | `openai`, `litellm`, `anthropic`, `xai` enabled; `amazon-bedrock` disabled | 已覆盖当前常用 provider;Bedrock 未用                                            | 不开启 Bedrock                  |
+| Search providers                                                     | `tavily` enabled; `brave` disabled                                         | Tavily 可继续用;Brave 仍未启用                                                  | 暂不启用 Brave,除非要多搜索后端 |
+| Memory / wiki / dreaming filters                                     | `memory-core`, `memory-wiki`, `active-memory` enabled                      | 本地 `excludeAgents` / `excludeGroupIds` 补丁继续生效;上游 dream 过滤修复可叠加 | 无需操作                        |
+| Security / config hardening                                          | 默认 doctor/audit surfaces                                                 | 发现 plaintext secret、LAN bind、open Telegram group policy 等既有风险          | 单独排期迁移 secret refs        |
 
 ## 验证
 
@@ -96,7 +111,11 @@
 - 已运行: gateway `2026.6.9`, PID `3446`; CLI/source HEAD `51eeb48`。
 - 本轮没有发现可完整 drop 的 runtime patch;旧生成物和被吸收的 Feishu id shim 已退役。
 - iMessage probe OK,事件循环未 degraded。
-- Doctor warnings 是既有维护项;本轮未执行 `doctor --fix`。
+- `doctor --fix` 已补跑;cron store 已 normalization。
+- 插件默认状态已检查: 21 个显式插件条目,18 个启用,3 个禁用。启用: `active-memory`, `anthropic`, `browser`, `codex`, `codex-supervisor`, `conversation-archive`, `elevenlabs`, `feishu`, `google`, `imessage`, `litellm`, `memory-core`, `memory-wiki`, `openai`, `tavily`, `telegram`, `workboard`, `xai`。禁用: `amazon-bedrock`, `brave`, `tokenjuice`。
+- Obsidian upgrade note: `Agent/main/upgrades/2026-06-21.md`。
+- Memory/dreaming 相关变更不会在 03:15 rsync 推残形态: schema/config validate OK,`memory-core` tests OK,本轮只保留 canonical config 过滤项和 doctor-normalized cron store。
+- 本记录提交后会再做一次干净 build/restart,避免 runbook-only commit 造成 source-checkout dist hash drift。
 
 ## 下一轮注意
 
