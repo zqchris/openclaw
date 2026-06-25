@@ -1,25 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClawdbotConfig } from "../runtime-api.js";
 
-const downloadMessageResourceFeishuMock = vi.hoisted(() => vi.fn());
-const saveMediaBufferMock = vi.hoisted(() => vi.fn());
-const detectMimeMock = vi.hoisted(() => vi.fn(async () => "image/png"));
+const saveMessageResourceFeishuMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./media.js", () => ({
-  downloadMessageResourceFeishu: downloadMessageResourceFeishuMock,
-}));
-
-vi.mock("./runtime.js", () => ({
-  getFeishuRuntime: () => ({
-    channel: {
-      media: {
-        saveMediaBuffer: saveMediaBufferMock,
-      },
-    },
-    media: {
-      detectMime: detectMimeMock,
-    },
-  }),
+  saveMessageResourceFeishu: saveMessageResourceFeishuMock,
 }));
 
 let resolveFeishuReferencedMessageMedia: typeof import("./bot-content.js").resolveFeishuReferencedMessageMedia;
@@ -39,12 +24,12 @@ afterEach(() => {
 describe("resolveFeishuReferencedMessageMedia", () => {
   it("downloads, saves, and reports byte count for a fresh image_key", async () => {
     const buf = Buffer.from("img-bytes");
-    downloadMessageResourceFeishuMock.mockResolvedValueOnce({
-      buffer: buf,
-      contentType: "image/png",
-    });
-    saveMediaBufferMock.mockResolvedValueOnce({
-      path: "/media/inbound/uuid-1.png",
+    saveMessageResourceFeishuMock.mockResolvedValueOnce({
+      saved: {
+        path: "/media/inbound/uuid-1.png",
+        contentType: "image/png",
+        size: buf.byteLength,
+      },
       contentType: "image/png",
     });
 
@@ -65,32 +50,30 @@ describe("resolveFeishuReferencedMessageMedia", () => {
       },
     ]);
     expect(out.downloadedBytes).toBe(buf.byteLength);
-    expect(downloadMessageResourceFeishuMock).toHaveBeenCalledTimes(1);
-    expect(downloadMessageResourceFeishuMock).toHaveBeenCalledWith(
+    expect(saveMessageResourceFeishuMock).toHaveBeenCalledTimes(1);
+    expect(saveMessageResourceFeishuMock).toHaveBeenCalledWith(
       expect.objectContaining({ maxBytes: 1024 * 1024 }),
     );
-    expect(saveMediaBufferMock).toHaveBeenCalledTimes(1);
   });
 
   it("downloads every embedded post image and media resource within the shared budget", async () => {
     const imageBuffer = Buffer.from("img");
     const videoBuffer = Buffer.from("vid");
-    downloadMessageResourceFeishuMock
+    saveMessageResourceFeishuMock
       .mockResolvedValueOnce({
-        buffer: imageBuffer,
+        saved: {
+          path: "/media/inbound/img.png",
+          contentType: "image/png",
+          size: imageBuffer.byteLength,
+        },
         contentType: "image/png",
       })
       .mockResolvedValueOnce({
-        buffer: videoBuffer,
-        contentType: "video/mp4",
-      });
-    saveMediaBufferMock
-      .mockResolvedValueOnce({
-        path: "/media/inbound/img.png",
-        contentType: "image/png",
-      })
-      .mockResolvedValueOnce({
-        path: "/media/inbound/clip.mp4",
+        saved: {
+          path: "/media/inbound/clip.mp4",
+          contentType: "video/mp4",
+          size: videoBuffer.byteLength,
+        },
         contentType: "video/mp4",
       });
 
@@ -119,7 +102,7 @@ describe("resolveFeishuReferencedMessageMedia", () => {
       },
     ]);
     expect(out.downloadedBytes).toBe(imageBuffer.byteLength + videoBuffer.byteLength);
-    expect(downloadMessageResourceFeishuMock).toHaveBeenNthCalledWith(
+    expect(saveMessageResourceFeishuMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         fileKey: "img_post_1",
@@ -127,33 +110,25 @@ describe("resolveFeishuReferencedMessageMedia", () => {
         maxBytes: 10,
       }),
     );
-    expect(downloadMessageResourceFeishuMock).toHaveBeenNthCalledWith(
+    expect(saveMessageResourceFeishuMock).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         fileKey: "file_post_1",
         type: "file",
         maxBytes: 7,
+        originalFilename: "clip.mp4",
       }),
-    );
-    expect(saveMediaBufferMock).toHaveBeenNthCalledWith(
-      2,
-      videoBuffer,
-      "video/mp4",
-      "inbound",
-      7,
-      "clip.mp4",
     );
   });
 
   it("returns the cached media on a repeat call for the same image_key without re-downloading", async () => {
     const buf = Buffer.from("img-bytes");
-    downloadMessageResourceFeishuMock.mockResolvedValueOnce({
-      buffer: buf,
-      contentType: "image/png",
-    });
-    saveMediaBufferMock.mockResolvedValueOnce({
-      path: "/media/inbound/uuid-1.png",
-      contentType: "image/png",
+    saveMessageResourceFeishuMock.mockResolvedValueOnce({
+      saved: {
+        path: "/media/inbound/uuid-1.png",
+        contentType: "image/png",
+        size: buf.byteLength,
+      },
     });
 
     const first = await resolveFeishuReferencedMessageMedia({
@@ -177,18 +152,17 @@ describe("resolveFeishuReferencedMessageMedia", () => {
     expect(first.media).toEqual(second.media);
     expect(first.downloadedBytes).toBe(buf.byteLength);
     expect(second.downloadedBytes).toBe(0);
-    expect(downloadMessageResourceFeishuMock).toHaveBeenCalledTimes(1);
-    expect(saveMediaBufferMock).toHaveBeenCalledTimes(1);
+    expect(saveMessageResourceFeishuMock).toHaveBeenCalledTimes(1);
   });
 
   it("scopes the cache by accountId so two accounts don't cross-pollute", async () => {
-    downloadMessageResourceFeishuMock.mockResolvedValue({
-      buffer: Buffer.from("x"),
-      contentType: "image/png",
-    });
-    saveMediaBufferMock
-      .mockResolvedValueOnce({ path: "/media/inbound/a.png", contentType: "image/png" })
-      .mockResolvedValueOnce({ path: "/media/inbound/b.png", contentType: "image/png" });
+    saveMessageResourceFeishuMock
+      .mockResolvedValueOnce({
+        saved: { path: "/media/inbound/a.png", contentType: "image/png", size: 1 },
+      })
+      .mockResolvedValueOnce({
+        saved: { path: "/media/inbound/b.png", contentType: "image/png", size: 1 },
+      });
 
     await resolveFeishuReferencedMessageMedia({
       cfg: {} as ClawdbotConfig,
@@ -207,17 +181,15 @@ describe("resolveFeishuReferencedMessageMedia", () => {
       accountId: "acct_b",
     });
 
-    expect(downloadMessageResourceFeishuMock).toHaveBeenCalledTimes(2);
+    expect(saveMessageResourceFeishuMock).toHaveBeenCalledTimes(2);
   });
 
   it("does not cache failures so transient API errors can be retried", async () => {
-    downloadMessageResourceFeishuMock
+    saveMessageResourceFeishuMock
       .mockRejectedValueOnce(new Error("transient 503"))
-      .mockResolvedValueOnce({ buffer: Buffer.from("x"), contentType: "image/png" });
-    saveMediaBufferMock.mockResolvedValueOnce({
-      path: "/media/inbound/retry.png",
-      contentType: "image/png",
-    });
+      .mockResolvedValueOnce({
+        saved: { path: "/media/inbound/retry.png", contentType: "image/png", size: 1 },
+      });
 
     const failed = await resolveFeishuReferencedMessageMedia({
       cfg: {} as ClawdbotConfig,
@@ -238,7 +210,7 @@ describe("resolveFeishuReferencedMessageMedia", () => {
 
     expect(failed.media).toEqual([]);
     expect(recovered.media).toHaveLength(1);
-    expect(downloadMessageResourceFeishuMock).toHaveBeenCalledTimes(2);
+    expect(saveMessageResourceFeishuMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns empty when neither image_key nor file_key is present", async () => {
@@ -252,6 +224,6 @@ describe("resolveFeishuReferencedMessageMedia", () => {
 
     expect(out.media).toEqual([]);
     expect(out.downloadedBytes).toBe(0);
-    expect(downloadMessageResourceFeishuMock).not.toHaveBeenCalled();
+    expect(saveMessageResourceFeishuMock).not.toHaveBeenCalled();
   });
 });

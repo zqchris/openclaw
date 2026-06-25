@@ -3,7 +3,7 @@ import { parseStrictNonNegativeInteger } from "openclaw/plugin-sdk/number-runtim
 import type { ClawdbotConfig } from "../runtime-api.js";
 import { buildFeishuConversationId } from "./conversation-id.js";
 import { normalizeFeishuExternalKey } from "./external-keys.js";
-import { downloadMessageResourceFeishu, saveMessageResourceFeishu } from "./media.js";
+import { saveMessageResourceFeishu } from "./media.js";
 import { isFeishuBroadcastMention } from "./mention.js";
 import { parsePostContent } from "./post.js";
 import { getFeishuRuntime } from "./runtime.js";
@@ -707,34 +707,25 @@ export async function resolveFeishuReferencedMessageMedia(params: {
     }
 
     try {
-      const result = await downloadMessageResourceFeishu({
+      const result = await saveMessageResourceFeishu({
         cfg,
         messageId,
         fileKey: resource.fileKey,
         type: resource.type,
         accountId,
         maxBytes: remainingBytes,
+        originalFilename: resource.fileName,
       });
-      const core = getFeishuRuntime();
-      const contentType =
-        result.contentType ?? (await core.media.detectMime({ buffer: result.buffer }));
-      const saved = await core.channel.media.saveMediaBuffer(
-        result.buffer,
-        contentType,
-        "inbound",
-        remainingBytes,
-        result.fileName || resource.fileName,
-      );
       const info: FeishuMediaInfo = {
-        path: saved.path,
-        contentType: saved.contentType,
+        path: result.saved.path,
+        contentType: result.saved.contentType ?? result.contentType,
         placeholder: resource.placeholder,
       };
       rememberReferencedMedia(cacheKey, info);
       media.push(info);
-      downloadedBytes += result.buffer.byteLength;
+      downloadedBytes += result.saved.size;
       log?.(
-        `feishu: downloaded ${labelPrefix}${messageType} media for message=${messageId}, saved to ${saved.path} (${result.buffer.byteLength}B)`,
+        `feishu: downloaded ${labelPrefix}${messageType} media for message=${messageId}, saved to ${result.saved.path} (${result.saved.size}B)`,
       );
     } catch (err) {
       log?.(
