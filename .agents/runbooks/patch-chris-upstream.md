@@ -1,619 +1,320 @@
-# OpenClaw 维护运行手册
+# OpenClaw patch/chris 维护运行手册
 
-## 架构概览
+本手册只服务 Chris 本机 `patch/chris` 源码安装。默认目标是快速、可回滚、尽快恢复 gateway，而不是发布级审计。
 
-```
-~/Github/openclaw/          ← 源码 + dist/（build 产物，gateway 运行入口）
-  ├── dist/index.js         ← gateway 启动入口
-  ├── extensions/           ← 插件源码
-  ├── patch/chris           ← 本地补丁分支（基于正式 tag）
-  └── main                  ← 锁定在正式 release tag（不跟 upstream dev）
+## 结论先行
 
-~/.openclaw/                ← 用户数据/运行状态（真实目录，非 symlink）
-  ├── openclaw.json         ← 主配置
-  ├── agents/               ← agent sessions/日志
-  ├── workspace/            ← 主 workspace（MEMORY.md, skills, scripts）
-  ├── workspace-social/     ← social agent
-  ├── workspace-email/      ← 邮件 agent
-  ├── workspace-ivy/        ← Ivy agent
-  ├── memory/               ← memory SQLite + LanceDB
-  ├── cron/                 ← 定时任务配置
-  ├── credentials/          ← OAuth/auth tokens
-  ├── identity/             ← device identity
-  └── logs/                 ← gateway 日志
+- `检查更新` 先回答“新版更新了什么”，再说本机是否落后。
+- `升级` 默认走轻量发布路径：rebase 本机 patch、build、重启、健康检查。
+- 不做默认大备份。`origin/patch/chris`、reflog、release tag 已足够兜底；只有 config/schema/data migration 风险明确时才额外备份。
+- 不把上游 `main` merge 进来。正式版只跟 release tag。
 
-~/Library/LaunchAgents/ai.openclaw.gateway.plist  ← launchd 服务定义
-```
+## 本机布局
 
-注：路径示例是 Mac mini 上的布局。主开发机的源码根可能在 `~/Code/Github/openclaw/openclaw/`。所有命令都假设当前 cwd 在源码根，跨机使用时自行替换。
-
-## 日常操作
-
-### 重启 Gateway
+源码根通常是：
 
 ```bash
-launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway"
+/Users/chris/Code/Github/openclaw/openclaw
 ```
 
-**禁止**：前台 `openclaw gateway run`、`nohup` 方式启动
-
-### 查看状态
+运行入口：
 
 ```bash
-pnpm openclaw status --deep      # 全面状态
-pnpm openclaw channels status    # 频道状态
-pnpm openclaw memory status      # 记忆状态
-pnpm openclaw wiki status        # wiki 状态
+/Users/chris/.local/bin/openclaw
 ```
 
-### 查看日志
+实际运行的 LaunchAgent：
 
 ```bash
-tail -f ~/.openclaw/logs/gateway.log       # 主日志
-tail -f ~/.openclaw/logs/gateway.err.log   # 错误日志
-./scripts/clawlog.sh                       # macOS 统一日志
+~/Library/LaunchAgents/ai.openclaw.gateway.plist
 ```
 
-## Git 分支模型
+重要分支：
 
-```
-upstream/main (openclaw/openclaw)     <- 上游 dev（不直接用！）
-  |
-  +-- v2026.4.8 (tag)                <- 正式发布版
-  |
-local main ---------------------------  锁定在正式 tag
-  |
-  +-- patch/chris --------------------  本地补丁（rebase on main）
-        |
-        +-- fix/xxx ------------------  临时修复分支（完成后 cherry-pick 到 patch/chris）
+- `main`: 本地 stable 基线，锁到正式 tag。
+- `patch/chris`: Chris 本机补丁分支，基于正式 tag rebase。
+- `origin`: `zqchris/openclaw` fork。
+- `upstream`: `openclaw/openclaw` 官方仓库。
 
-origin (zqchris/openclaw)             <- GitHub fork
-  +-- main                            <- 同步 local main（= 正式 tag）
-  +-- patch/chris                     <- 同步 local patch/chris
-```
+## 检查更新
 
-**关键原则**：
-
-- `main` 永远锁 tag，不跟 upstream dev
-- 所有改动在 `patch/chris` 上
-- 临时修复用 `fix/xxx` 分支，完成后 cherry-pick 到 `patch/chris`
-- 每次升级/改动后都 push `origin/patch/chris`
-- `origin/main` 也要同步（CI workflow 会用）
-
-## 检查更新（只读，不动任何东西）
-
-用户说"检查更新""有没有新版本""最新版是多少"时走这个：
+用户说“检查更新 / 有没有新版本 / 最新版是什么”时，先讲 changelog。
 
 ```bash
-# 1. 必须 fetch upstream tags（绝不能只看本地 tag 或 fork main）
 git fetch upstream --tags
-# 2. 看上游最新正式 release
-gh release list --repo openclaw/openclaw --limit 5
-# 3. 当前运行版本
 openclaw --version
+npm view openclaw version dist-tags.latest --json
 ```
 
-汇报必须包含：
+同时用 GitHub latest 确认正式版，避免 npm/fork/tag 缓存误判。
 
-1. **当前运行版本** vs **最新正式版**（明确说两个版本号）
-2. **当前版本到最新版之间的 changelog**（不是更早版本之间的！）：
-   - `git show v<latest>:CHANGELOG.md` 读从当前版本到最新版之间的所有版本段落
-3. **跟用户相关的新功能/修复清单**，格式：
-   > | 功能/修复 | 跟你相关度 | 说明 | 建议 |
-   > | --------- | ---------- | ---- | ---- |
-4. 问用户要不要升
+汇报顺序：
 
-⛔ **绝对禁止**：`git pull upstream main` / `git merge upstream/main` / `gh api merge-upstream`。
+1. 最新正式版是什么，发布页核心更新是什么。
+2. 本机当前运行版是什么，是否落后。
+3. 跟 Chris 相关的更新点和建议。
+4. 如果需要，才给升级路径。
 
----
+不要先展开 rebase、备份、风险审计。
 
-## 升级流程
+## 升级快路径
 
-**核心原则（2026-05-31 修订）：升级时让「dist 不一致窗口」尽量短，build 后尽快重启 + 预热。**
+适用：本机自用 gateway、`patch/chris`、小版本 stable 更新、无明显数据迁移/安全/支付/外部凭证风险。
 
-Gateway 启动时把 dist 加载进内存，**已加载的静态模块** build 确实不影响——但运行期它仍会**按需 lazy/dynamic import dist**（plugin 加载、惰性 chunk、hook 路径）。所以 `trash dist && pnpm build` 之后，老 gateway 进入「borrowed time」：下一次它 lazy import 一个新 hash 的 chunk 就 `ERR_MODULE_NOT_FOUND` 崩，触发源可以是任意东西——cron、health probe、`pnpm openclaw` 命令、**甚至 user 自己发一条消息**。
-
-因此**不要**把老 gateway 长时间晾在这个窗口里（这正是「build 完无限期等 user 手动重启」的隐患：窗口拉长、user 自己发消息都可能撞崩、首条消息还吃冷启动）。合理做法：
-
-- build + step 5.5 纯 node import 自检通过后，**主动、尽快重启到新 dist，并做一次预热**（见 step 7），把窗口压到秒级。
-- 重启挑低打扰时机：先看有没有 inflight session（`status` / 看 agent 活动）。没有就直接重启；拿不准就**快速问一句**，而不是默认「永不重启」。
-- 旧的「agent 绝不主动重启 gateway」是过度死板的规则，已退役。重启是升级的正常收尾，不是危险禁区——前提是 build 干净 + 自检通过 + 时机合理。
-
-### ⚠️ dist 一致性规则
-
-**主 tree 的 `dist/` 应该跟"下次 gateway 重启时要加载的代码"一致。** 内存里跑的老 gateway 不受 dist 改动影响，但下次 user 重启 gateway 会读 dist——所以 build 完后 dist 要是正确的目标版本。
-
-不允许的操作:
-
-- ❌ 主 tree 切到其它分支后 `pnpm build`(下次 gateway 重启会加载错分支的代码)
-- ❌ 增量 build 崩掉后 dist 半残留(stub 指向缺失的 hashed bundle，下次重启 ERR_MODULE_NOT_FOUND)
-- ❌ 做 PR fix 验证直接在主 tree `trash dist && pnpm build`(污染 dist，跟 patch/chris 不一致)
-
-**合规做法**:
-
-1. **PR 验证用 worktree 隔离**(避免主 tree dist 被污染):
-   ```bash
-   git worktree add .claude/worktrees/pr-<name> <pr-branch>
-   cd .claude/worktrees/pr-<name>
-   pnpm install --frozen-lockfile && trash dist && pnpm build
-   # 做完
-   cd ~/Github/openclaw && git worktree remove .claude/worktrees/pr-<name>
-   ```
-2. **主 tree 升级/cherry-pick 后 build**: 直接 `trash dist && pnpm build`。build 期间别改 config / enable plugin（避免 gateway dynamic import 撞上半残 dist）。Build 完成 + step 5.5 自检 → **尽快重启到新 dist + 预热**（step 7），别把老 gateway 长时间晾在 borrowed-time 窗口。
-
-### 1. 准备（只读 + 标桩，不碰运行环境）
-
-```bash
-# 确认当前版本和分支
-git describe --tags --abbrev=0 main
-git log --oneline -3 patch/chris
-
-# 升级前在 fork 打 git tag 当回滚锚点（免费、在 git 里、易删）
-TARGET=v2026.5.26   # 替换为本轮目标 tag
-git tag pre-upgrade-${TARGET} patch/chris
-git push origin pre-upgrade-${TARGET}
-
-# 确认 ~/.openclaw 最近一次 daily cron 备份在 24h 内
-# 注意 BSD `date -j` parses Z 时区错，age 计算大约偏 8h；目测 commit date 离今天近就行
-gh api repos/zqchris/openclaw-backup/commits --jq '.[0].commit.author.date'
-```
-
-**回滚路径**：
-
-- 代码：`git reset --hard pre-upgrade-${TARGET}`
-- 运行状态：从 `zqchris/openclaw-backup` 拉对应 commit 的 `state/openclaw.json` 等文件
-
-**不再做 `pnpm openclaw backup create --verify`**。理由：
-
-- `~/.openclaw` 已有 `zqchris/openclaw-backup` 每天 04:00 cron 全量覆盖
-- 8GB tarball 写在 `~/Backups/` 后没清理逻辑，每次升级累 8GB+ 死货
-- 边际价值（< 24h 的 state 落差 + GitHub 当时挂了）不抵 disk cost
-
-如果 daily cron > 24h 没跑（gh 返回的时间戳显示落后），那一次性手动备份是合理的兜底：
-
-```bash
-pnpm openclaw backup create --verify --output ~/Backups
-# 用完跑一次清理
-find ~/Backups -name "*-openclaw-backup.tar.gz" -mtime +14 -delete
-```
-
-**⚠️ destructive op 自检**：`git reset --hard` 前先确认 `git branch --show-current` 输出预期分支。曾经因为 `git checkout main` 失败（Aborting）但没看 exit code，下一条 `git reset --hard v<TARGET>` 在 patch/chris 上跑掉，炸掉 22 个补丁。`pre-upgrade-${TARGET}` tag 救场了，但流程要先 `set -e` 或者每条 destructive 命令检查上一步 exit code。
-
-跨端笔记走 Obsidian vault（`~/Documents/ChrisData/Agent/*`），不再写 `zqchris/aidev` `CURRENT_STATE.md`。
-
-### 2. 检查上游新 tag（只读）
+### 1. 定目标和当前状态
 
 ```bash
 git fetch upstream --tags
-echo "当前: $(git describe --tags --abbrev=0 main)"
-echo "最新: $(git tag -l 'v2026.*' | sort -V | tail -1)"
+git status --short --branch
+git describe --tags --always --dirty
+openclaw --version
+openclaw gateway status --deep --require-rpc --json \
+  | jq '{cli:.cli.version,gateway:.gateway.version,rpc:.rpc.version,service:.service.runtime.status,pid:.service.runtime.pid,drift:.pluginVersionDrift.drifts}'
 ```
 
-### 2.5. 评估变更（只读，决定要不要升）
+目标 tag 必须是 GitHub latest / npm latest 对应的正式 tag，例如 `v2026.6.10`。
+
+### 2. 读新版内容
 
 ```bash
-# 读 CHANGELOG 新版本段落
-head -200 CHANGELOG.md
-
-# 或者直接看两个 tag 之间的 commit
-git log --oneline v2026.4.9..v2026.4.10
-
-# 看 diff 影响面（尤其是 patch/chris 触碰的文件）
-git diff --stat v2026.4.9..v2026.4.10
+git show v<TARGET>:CHANGELOG.md | sed -n '/^## <VERSION>/,/^## /p'
+git log --oneline v<SOURCE>..v<TARGET> --max-count=80
 ```
 
-评估要点：破坏性变更？patch/chris 会不会冲突？新功能是否值得升？
-**这一步决定是否继续**。如果不升，流程到此结束，运行环境完全没动过。
+输出给用户时优先解释“更新了什么”和“是否值得升”。
 
-### 2.6. 补丁审计（只读，**绝不能省略**）
+### 3. 轻量补丁审计
 
-对 patch/chris 上所有独有补丁做「上游覆盖度」审计，能 drop 的立刻 drop。
+只审计 `patch/chris` 相对旧 source tag 的独有补丁。
 
 ```bash
-# 用候选目标 tag 做基线（不要用本地 main）
-TARGET=v2026.5.14   # 替换为本轮候选 tag
-git log --oneline ${TARGET}..patch/chris
+SOURCE=v2026.6.9
+TARGET=v2026.6.10
+git log --oneline ${SOURCE}..patch/chris
 ```
 
-⚠️ 不要用 `git log --oneline main..patch/chris`。本地 `main` 可能还停在前一个 release tag，而 `patch/chris` 已经 rebase 到更新的目标 —— 这样会把整段上游 commit 也算进审计列表（实测会出现 6000+ 行）。
+默认规则：
 
-**逐个** 做下面这张表，给 Chris 决策：
+- 旧版本 generated metadata commit 每轮 drop，升级后重新生成。
+- 已被上游覆盖的补丁 drop。
+- 仍解决本机真实问题的补丁 keep。
+- 没有 runtime 冲突时，不写长表；记录 keep/drop 摘要即可。
 
-| 补丁       | 目的     | 上游现状 (v<new>)  | 官方配置替代 | 结论                         |
-| ---------- | -------- | ------------------ | ------------ | ---------------------------- |
-| hash + msg | 解决什么 | 已合入/已改进/未动 | 有/无        | drop / 保留 / 拆分保留一部分 |
-
-每个补丁的审计流程：
-
-1. `git show <commit>` 看完整 diff，理解补丁意图
-2. `git show v<new>:<file>` 看上游当前文件状态
-3. 搜 `git show v<new>:CHANGELOG.md`、`schema.help.ts`、docs/ 是否有官方 config
-4. 形成结论：drop / 保留 / 拆分
-
-**Chris 拍板后才能开始 rebase**。rebase 时主动 drop 被退役的补丁。
-
-**绝不允许**：「直接 rebase，冲突再说」。这就是过去 patch 堆到 20+ 的根因。
-
-### 3. 同步 tag 到 fork + 更新 local main（开始动 git，gateway 不受影响）
-
-#### ⛔ 绝对禁止（会把上游数百个 dev commit 拉进来）
-
-```
-git pull upstream main          # ❌ 禁止
-git merge upstream/main         # ❌ 禁止
-gh api .../merge-upstream       # ❌ 禁止（GitHub fork sync API，同步的是 branch 不是 tag）
-```
-
-upstream main 有大量未发布 dev 代码，**只能用 tag，不能碰 upstream main branch**。
-
-#### ✅ 正确做法：只用 tag 指针
+如果要先预估冲突，用临时 worktree：
 
 ```bash
-# 1. 推送新 tag 到自己的 fork（让 fork 也有这个 tag）
-git push origin v2026.4.10    # 替换为实际 tag
+tmp=$(mktemp -d /tmp/openclaw-rebase-check.XXXXXX)
+branch=tmp-upgrade-check-$(date +%s)
+git worktree add -q -b "$branch" "$tmp" patch/chris
+git -C "$tmp" rebase --onto "$TARGET" "$SOURCE"
+git -C "$tmp" rebase --abort 2>/dev/null || true
+git worktree remove -f "$tmp"
+git branch -D "$branch"
+```
 
-# 2. 更新 local main 到新 tag
+### 4. 更新 main 到正式 tag
+
+```bash
 git checkout main
-git reset --hard v2026.4.10
-
-# 3. 把 fork 的 main 指向 tag（不是 upstream main！）
-git push origin "v2026.4.10^{}:refs/heads/main" --force-with-lease
+git reset --hard "$TARGET"
+git push origin "${TARGET}^{}:refs/heads/main" --force-with-lease
 ```
 
-**原理**：`v2026.4.10^{}` 解引用到 tag 指向的 commit，只推那一个点，不带任何 dev 代码。
+禁止：
 
-### 4. Rebase 补丁
+```bash
+git pull upstream main
+git merge upstream/main
+gh api .../merge-upstream
+```
+
+### 5. Rebase patch/chris
 
 ```bash
 git checkout patch/chris
-git rebase main
+git rebase --onto "$TARGET" "$SOURCE"
 ```
 
-逐个解决冲突。每个补丁检查：
+常见处理：
 
-- 是否已被上游合并？-> drop
-- 是否仍然需要？-> 保留并适配
-
-### 5. Build + 验证（**不停 gateway**）
-
-Gateway 跑期间 build 对**已加载的静态模块**安全；但运行期它仍会 lazy/dynamic import dist，build 后老 gateway 进入 borrowed-time（见核心原则）。所以 build 完别久等——尽快重启到新 dist。
-
-⚠️ **build 期间避免**：不要触发 plugin 动态加载 / config 改动 / `pnpm openclaw ...` 命令——这些可能让 gateway 临时 dynamic import dist 文件，撞上半残的 build 中间状态。
-
-**兜底**：step 5.5 的 import 自检（`node --input-type=module -e 'await import("./dist/index.js")'`）不管什么原因 dist 半残都能 catch。失败就 `trash dist && pnpm build` 重做一遍。
+- generated metadata 冲突：优先跳过旧 generated commit，后面重新生成。
+- 代码冲突：只解决真实冲突，跑对应窄测。
+- rebase 后确认没有 conflict marker：
 
 ```bash
-# 不停 gateway —— gateway 内存版不受 dist 改动影响
-
-# 干净 build —— trash 必须紧贴 build，中间不要触发 dist 写入
-trash dist dist-runtime                 # 两个一起清，避免老 stage 残留
-pnpm install --frozen-lockfile
-pnpm build                              # tsdown + runtime-postbuild（含 stage dist-runtime）
-pnpm check                              # lint/format/typecheck
-pnpm test src/path/to/changed.test.ts   # 相关测试
-
-# Schema 校验（不启动 gateway，纯静态检查 openclaw.json 是否符合新版 schema）
-# 如果新版改了 config schema，这里能在 5.5 启动自检之前提前 catch 配置问题
-pnpm openclaw config validate
-
-# 变更门禁（根 AGENTS.md / CLAUDE.md 要求）
-pnpm check:changed --base upstream/main
-# Testbox 跑不通时记录本地降级模式（哪些 lane 没跑、为什么）
+git diff --check
+rg -n '<<<<<<<|=======|>>>>>>>' -- .
 ```
 
-⚠️ 一个 worktree 里**不要同时跑两个独立的 `pnpm test`**，Vitest 缓存会撞 `ENOTEMPTY`。要并发的话用 `OPENCLAW_VITEST_FS_MODULE_CACHE_PATH` 隔离。
+### 6. 生成物和验证
 
-### 5.5. Build 一致性自检（v2026.4.25+ 必做，跳过 = gateway 起不来）
-
-**真正踩过的坑**：升级 v2026.4.25 时，`pnpm openclaw --version` 在 trash dist 之前触发了一次失败 build，污染了 dist。后续 `trash dist && pnpm build` 流程跑完后 dist 看起来正常，但启动 gateway 仍然 `ERR_MODULE_NOT_FOUND: dist/defaults-Bnf56S7k.js`，因为 dist 累积了多个 hash 的 chunk（`tsdown` 的 clean step 不全清 dist），`dist/index.js` stub import 的 hash 跟实际写出的 chunk 不匹配。
-
-**症状识别**：
-
-- gateway.err.log 出现 `ERR_MODULE_NOT_FOUND: dist/<base>-<hash>.js`（fatal）
-- 紧接着可能还有大量 `plugin manifest not found: dist-runtime/extensions/<id>/openclaw.plugin.json` —— 这是**次要副作用**，不是根因；gateway 早就在 module resolve 阶段 fatal 了，根本没进入 plugin loading
-- `~/.openclaw/logs/stability/openclaw-stability-*-gateway.startup_failed.json` 写出
-- launchd 反复 keepalive 重启 → throttle
-
-**自检（必须在 bootstrap 之前跑）**：
+默认轻量验证：
 
 ```bash
-# 1. dist-runtime 已被 runtime-postbuild stage（应该 build 时自动产生）
-ls dist-runtime/extensions/litellm/openclaw.plugin.json >/dev/null 2>&1 \
-  && echo "✅ dist-runtime stage 完整" \
-  || echo "❌ dist-runtime 缺 — 跑 node scripts/stage-bundled-plugin-runtime.mjs 补"
-
-# 2. dist/index.js 是 stub loader（v2026.4.25 stub 约 2.7-2.9 KB；不是巨大 bundle）
-[ -f dist/index.js ] && echo "✅ dist/index.js 存在 ($(stat -f '%z' dist/index.js) bytes)"
-
-# 3. 真正抓"chunk 引用错配"（ERR_MODULE_NOT_FOUND）的方法：startup smoke
-#    无法用静态文件名计数判断 — tsdown 会为不同源模块生成同 base name 不同 hash 的多个 chunk，
-#    比如 dist/defaults-*.js 有 5 个分别属于 src/agents/defaults.ts、extensions/sglang/defaults.ts 等，是预期产物。
-#    真正能判定的是 dist/index.js 的 import 链能否完整解析：
-node --input-type=module -e 'await import("./dist/index.js").catch(e => { console.error("❌ dist 启动 import 失败:", e.message); process.exit(1) }); console.log("✅ dist 启动 import 通")' 2>&1 | tail -3
+pnpm config:docs:gen
+pnpm config:channels:gen
+pnpm config:docs:check
+pnpm config:channels:check
 ```
 
-**判定逻辑**：
+有 schema 变更时再加：
 
-- 真正会让 gateway 启动失败 `ERR_MODULE_NOT_FOUND: dist/<base>-<hash>.js` 的，是 build 流程被打断（lock 冲突、ENOTEMPTY、`pnpm openclaw ...` 在中间触发了一次失败 build）导致 `dist/index.js` 引用某 chunk hash，但该 hash 文件没写出来。
-- 静态计数 `ls dist/<base>-*.js | wc -l` 不能区分"多模块同 base name（正常）" vs "失败 build 残留（异常）"，**已废，不要再用**。
-- 用一次实际 import 探测最直接：能 import 通就启动得来；import 失败立刻报具体缺哪个 chunk hash。
+```bash
+pnpm config:schema:gen
+pnpm config:schema:check
+```
 
-**修复**：
+有 runtime 冲突时跑冲突相关测试。不要为了纯文档/生成物变更默认跑全量 CI。
+
+### 7. Build
+
+主 tree 的 `dist/` 必须跟下次 gateway 启动的代码一致。build 后不要长时间晾着老 gateway。
 
 ```bash
 trash dist dist-runtime
-pnpm build    # 重新干净 build
-# 自检通过后再 bootstrap
+pnpm build
+ls dist-runtime/extensions/litellm/openclaw.plugin.json
+node --input-type=module -e 'await import("./dist/index.js")'
+pnpm openclaw config validate
 ```
 
-**dist-runtime 缺失修复**（chunk 一致但 dist-runtime 没 stage 出来时）：
+除非依赖确实缺失，不默认 `pnpm install`。
+
+### 8. 重启和轻量健康检查
+
+build/import/config validate 通过后尽快重启：
 
 ```bash
-# 直接补 stage
-node scripts/stage-bundled-plugin-runtime.mjs
-
-# 或者重做一遍干净 build
-trash dist dist-runtime && pnpm build
+openclaw gateway install --force --json
 ```
 
-⛔ **不要用 `pnpm openclaw doctor --fix` 修这个** —— 不是因为 --fix 危险（2026-05-29 起 --fix 已安全，见 step 6），而是因为 doctor --fix 改的是 config，根本不碰 dist。修 dist orphan-chunk 只能 `trash dist && pnpm build`。
-
-`runtime-postbuild` 步骤在 `pnpm build` 流程里（`scripts/build-all.mjs` BUILD_ALL_STEPS），调用 `stageBundledPluginRuntime()`，把 `dist/extensions/<id>/` 的 manifest + 入口 stage 到 `dist-runtime/extensions/<id>/`，并 symlink node_modules。**正常情况 build 完就有 dist-runtime**，只有 build 流程被打断（lock 冲突、ENOTEMPTY 等）才会缺。
-
-### Bundled plugin runtime deps lazy stage（v2026.4.25 已不需要预热）
-
-`trash dist && pnpm build` 后 `dist/extensions/<id>/node_modules` 全空（plugin-local deps 不在 build 产出）。但**v2026.4.25 起 gateway 启动时会自动为所有 enabled plugin 把 deps stage 完**，不需要任何主动预热。
-
-**实测 v2026.4.25 启动 timeline**（升级后第一次重启的 gateway.log）：
-
-```
-[gateway] starting...
-[plugins] browser staging bundled runtime deps (7 missing): playwright-core, ws, ...
-[plugins] browser installed bundled runtime deps in 10249ms
-[plugins] memory-wiki staging bundled runtime deps (2 missing): typebox, yaml
-[plugins] memory-wiki installed bundled runtime deps in 1906ms
-[gateway] starting HTTP server...
-```
-
-**第一次启动多花 ~10s**（browser 装 playwright-core 等大件最长），属于不可避免的 startup overhead；后续启动 deps 已存在不再 stage。
-
-历史认知（v2026.4.24 时代）："发消息触发 lazy stage" — 已废，v2026.4.25 改成 startup 时自动跑，发不发消息一样。
-
-需要自检 deps 状态时：
+验证：
 
 ```bash
-# 查哪些 enabled plugin 还没 stage（理论上 startup 后就该齐）
-for d in dist/extensions/*/; do
-  pkg="${d%/}"; pkg="${pkg##*/}"
-  [ ! -d "$d/node_modules" ] && [ -f "$d/package.json" ] \
-    && grep -q '"dependencies"' "$d/package.json" 2>/dev/null \
-    && echo "no-deps: $pkg"
-done
+openclaw --version
+openclaw gateway status --deep --require-rpc --json \
+  | jq '{cli:.cli.version,gateway:.gateway.version,rpc:.rpc.version,service:.service.runtime.status,pid:.service.runtime.pid,configAudit:.service.configAudit.ok,drift:.pluginVersionDrift.drifts}'
+openclaw health --json \
+  | jq '{ok:.ok,version:.version,eventLoop:.eventLoop.degraded}'
+openclaw channels status --probe --channel imessage --json \
+  | jq '{configured:.configured,running:.running,probe:.probe.ok,eventLoop:.eventLoop.degraded}'
 ```
 
-disabled plugin 没 stage 是正常的，启用时再装。
-
-### 6. 新功能部署（必做，不能跳过）
-
-升级后 agent **必须主动**完成以下流程，不等用户问：
-
-**a) 读 changelog，提取跟用户相关的新功能**
+如果 `gateway install --force` 修改了 service env，复核 proxy 形状但不要打印 secret：
 
 ```bash
-# 对比旧版和新版之间的 changelog 段落
-# 例如从 v2026.4.8 升到 v2026.4.9，读 ## 2026.4.9 段落
-head -200 CHANGELOG.md
+rg -n '^(export )?(http_proxy|https_proxy|all_proxy|no_proxy|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|OPENCLAW_PROXY_URL)=' ~/.openclaw/service-env/ai.openclaw.gateway.env
 ```
 
-**b) 检查新功能的默认启用状态（只读）**
+### 9. 记录和最终 dist 对齐
+
+新增：
 
 ```bash
-pnpm openclaw doctor              # 配置健康 + 迁移提示
-pnpm openclaw doctor --fix        # 2026-05-29 起安全，可直接跑（见下）
-pnpm openclaw config get plugins  # 检查新插件是否已注册但未启用
+.agents/runbooks/patch-chris-v<TARGET>-record.md
 ```
 
-✅ **`pnpm openclaw doctor --fix` 现在可以跑（2026-05-29 起）**。历史上 --fix 会把刻意配的 pi + openai-codex/gpt-5.5 多 provider fallback 链强迁成 codex + openai/\*，所以一度禁用；但迁移早已完成，8 个 agentRuntime 全在 codex 上，没东西可被破坏了。详见 memory `doctor_fix_caveat`。拿不准时仍可先看 doctor 无 `--fix` 的输出再决定 apply。**注意**：若未来某个 doctor 版本引入了**新的**破坏性迁移，那是另一回事，单独评估，别跟这条历史规则混淆。
+记录必须短：
 
-**c) 向用户汇报新功能清单，格式如下**：
+- source/target tag
+- 更新收益
+- keep/drop/port 摘要
+- 冲突和生成物
+- build/restart/健康检查结果
+- 未跑的深度检查
 
-> 本次升级新增了以下跟你相关的功能：
->
-> | 功能                | 默认状态 | 对你的好处                            | 建议     |
-> | ------------------- | -------- | ------------------------------------- | -------- |
-> | Memory Wiki         | 未启用   | agent 可以结构化整理跨 session 知识   | 建议开启 |
-> | Session checkpoints | 默认开启 | 可以回溯 compaction 前的 session 状态 | 无需操作 |
-> | ...                 | ...      | ...                                   | ...      |
->
-> 要开启哪些？
+如果记录提交发生在 build 之后，`HEAD` 变了。再跑一次 `pnpm build` 或至少确认 `openclaw gateway status` 没触发 stale-dist rebuild；保险做法是记录提交后再最终 build/restart。
 
-**d) 用户确认后逐个启用并验证**
+### 10. 推送
 
 ```bash
-pnpm openclaw config set plugins.entries.xxx.enabled true
-pnpm openclaw config set xxx.yyy value
-# 每个功能启用后立即验证
-pnpm openclaw xxx status
-```
-
-**重要**：不要只说"兼容"就跳过。新功能如果对用户有价值，必须主动推荐。
-
-### 7. 重启到新 dist + 预热（尽快，挑低打扰时机）
-
-Build + 自检通过后**不要无限期晾着**（见核心原则的 borrowed-time 窗口）。判断时机后主动重启：
-
-- 先看有没有 inflight session（`pnpm openclaw status` / agent 近期活动）。空闲就直接重启；user 明显正用就快速问一句再动。
-- 重启命令：
-
-  ```bash
-  launchctl bootout gui/$(id -u)/ai.openclaw.gateway
-  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
-  ```
-
-- 重启后**预热**，避免 user 首条消息吃冷启动：首次新版启动自动 stage plugin deps（~10s）；再跑一遍 `channels status --probe` 暖频道路径；codex agent 首轮 app-server 冷启动可能 ~5min（见 memory `feedback_cold_start_normal`），值得时给常用 agent 发一条 no-op turn 预热。
-
-> 注：`doctor --fix` 若检测到 gateway erroring 会**自己重启**它——等于替你完成重启，可控但要知道会发生。
-
-**重启后**，agent 做版本验证：
-
-```bash
-sleep 10
-launchctl print gui/$(id -u)/ai.openclaw.gateway | grep -E 'state|pid'
-EXPECTED=$(git describe --tags --abbrev=0 main)
-echo "期望版本: $EXPECTED"
-node -e 'console.log(require("./package.json").version)'  # 不触发 build
-tail -50 ~/.openclaw/logs/gateway.log | grep -iE 'start|version|boot|ready'
-pnpm openclaw doctor   # 只读
-
-# 频道验证（5.12+ 主消息面是 iMessage；BlueBubbles 已被上游删除）
-pnpm openclaw channels status --probe --channel imessage --json
-# 关注：configured/running、probe ok、private API ready、
-# editMessage / retractMessagePart / sendRichSupportsAttachment 这些能力位
-```
-
-**版本不符怎么办（user 排查思路）：**
-
-1. 确认 `dist/` 是新 build 的（`ls -la dist/index.js` 时间戳）
-2. 完全 `launchctl bootout` 后再 bootstrap（避免 kickstart 复用老进程）
-3. 检查残留进程：`ps aux | grep openclaw-gateway`
-4. 检查 plist 里的 `ProgramArguments` 指向当前 repo dist/
-
-**版本验证后向 user 汇报**：
-
-> gateway 已重启，运行版本核对为 vX.X.X（期望 vX.X.X），PID=xxxxx
-
-### 8. 推送 + 同步
-
-```bash
-# 推送补丁分支到 fork
 git push origin patch/chris --force-with-lease
-
-# 确认 fork 上两个关键 ref 都正确
-echo "origin/main: $(git log --oneline -1 origin/main)"
-echo "origin/patch/chris: $(git log --oneline -1 origin/patch/chris)"
-
-# 在 .agents/runbooks/ 新增本轮版本记录：patch-chris-v<target>-record.md
-# （source/target tag、备份 tag、补丁 keep/drop/port 清单、验证证据、用户面 checklist）
+git fetch origin
+git log --oneline -1 origin/main
+git log --oneline -1 origin/patch/chris
 ```
 
-⚠️ 升级若动到 agent persona 或 memory schema，确认下一次凌晨 3:15 的 Obsidian vault rsync 不会把残形态推到联邦层。
+## 什么时候升级验证强度
 
-跨端升级笔记写在 Obsidian vault：`~/Documents/ChrisData/Agent/main/upgrades/<date>.md`（取代旧的 `zqchris/aidev/CURRENT_STATE.md` 路径，aidev 已退役）。
+提高验证强度的条件：
+
+- config schema 或 state migration 会改 `~/.openclaw`。
+- 涉及 secrets、auth、支付、外部 API 凭证、安全边界。
+- 发布给 Filo/SLG 等用户用，回滚成本高。
+- rebase 出现 runtime 代码冲突。
+
+这时再加：
+
+```bash
+openclaw doctor --lint --deep --json
+openclaw models status --json
+openclaw channels status --json
+```
+
+必要时跑 patch 相关测试或 `pnpm check:changed`。不要把这些变成本机小版本升级的默认起步动作。
+
+## 快速回滚
+
+代码回滚优先用 git：
+
+```bash
+git reflog patch/chris
+git reset --hard <old-head>
+trash dist dist-runtime && pnpm build
+openclaw gateway install --force --json
+```
+
+如果 `origin/patch/chris` 还没推新 head，也可直接回到远端：
+
+```bash
+git reset --hard origin/patch/chris
+```
+
+只有本轮确实改坏 `~/.openclaw` 状态时，才考虑 daily backup 或手动状态恢复。不要默认创建 8GB tarball。
 
 ## 补丁管理
 
-### 当前补丁清单
+当前补丁清单以最新 `.agents/runbooks/patch-chris-v<TARGET>-record.md` 为准，不在主 runbook 里内嵌过期列表。
 
-**当前补丁清单见 `.agents/runbooks/patch-chris-v<最新>-record.md`**（如 `patch-chris-v2026.5.12-record.md`）。每轮升级落在那个版本记录里：source/target tag、补丁 keep/drop/port 清单、验证证据、用户面 checklist。runbook 不再内嵌过期的补丁列表。
-
-BlueBubbles 在 v2026.5.12 已被上游删除，主消息面切到 iMessage（`extensions/imessage`，外加 `imsg` CLI + Mac mini SSH 中继）。iMessage 频道配置面要点：
-
-- `channels.imessage.cliPath` 指向 SSH 包装（远端跑 `/opt/homebrew/bin/imsg`；非交互 ssh 没 Homebrew PATH，要手动写）
-- `channels.imessage.remoteHost` 用来 SCP 远端附件
-- `channels.imessage.groupPolicy=allowlist` 时 `channels.imessage.groups` 是兜底要件，删了群消息会被静默丢
-- `channels.imessage.catchup` 用于重启后补拉漏消息
-
-iMessage 切换的完整笔记见 `.agents/runbooks/patch-chris-v2026.5.12-record.md` 里的 "Runtime and config migration" 段。
-
-### ACP / acpx 已停用（2026-05-18）
-
-`extensions/acpx`、`agents.list.codex`（runtime: acp）、`bindings[]` 里的 ACP 路由**全部刻意关掉**。原因：
-
-- Codex 走 native harness 已足够（per `extensions/acpx/skills/acp-router/SKILL.md`：「Codex chat binding defaults to the native Codex app-server plugin unless ACP is explicit」）
-- 复杂编码任务用 `coding-agent` skill（spawn 后台 PTY 进程）替代 ACP 路径
-- Codex home bridge feature（`feat(acpx): add codex home bridge`）已 drop，OAuth 改走 inline auth-profile（`openclaw models auth login --provider openai-codex`）
-
-**升级时注意**：
-
-- 不要在 cherry-pick / rebase 时把 `feat(acpx)` 或 ACP runtime backend 相关本地修复带回来
-- `agents.list.codex` 不要再加回 config
-- 别误信 doctor「acpx unreferenced sidecar」之类的提示 enable 回去
-- `~/.openclaw/agents/codex/`、`~/.openclaw/workspace-codex/` 保留作历史归档，但 runtime 不会触发
-- 如果要复活：`plugins.entries.acpx.enabled = true` + 在 `plugins.allow` 加回 `"acpx"` + 重新加 codex agent entry
-
-### 新增补丁规则
+新增本机补丁：
 
 ```bash
-# 在 fix/xxx 分支上开发
-git checkout -b fix/xxx patch/chris
-# 改代码、测试
-# cherry-pick 到 patch/chris
+git checkout -b fix/<name> patch/chris
+# 修复、测试
 git checkout patch/chris
-git cherry-pick fix/xxx
-# 或直接在 patch/chris 上提交（简单修复）
+git cherry-pick fix/<name>
 ```
 
-## 配置变更
+简单修复也可以直接在 `patch/chris` 提交。
 
-### 修改配置
+每轮升级继续注意：
+
+- rich Telegram cherry-pick 组已在 6.8 退役，不要带回来。
+- iMessage canonical key 是 `sendTransport`，不要恢复旧 `transport`。
+- ACP/acpx runtime 已停用，除非用户明确要求，不要启用。
+- 旧 generated metadata commit 每轮 drop，重新生成。
+
+## 日常命令
+
+重启 gateway：
 
 ```bash
-pnpm openclaw config set <path> <value>
+openclaw gateway install --force --json
 ```
 
-批量修改时先暂停 cron：
+查看状态：
 
 ```bash
-pnpm openclaw config set cron.enabled false
-# 做所有修改
-pnpm openclaw config set cron.enabled true
+openclaw gateway status --deep --require-rpc --json
+openclaw health --json
+openclaw channels status --probe --channel imessage --json
 ```
 
-### 当前关键配置
+日志：
 
-- Memory Wiki: bridge 模式，vault 在 `~/Documents/ChrisData/OpenClaw Wiki`
-- Dreaming: 5 个 agent 都开启，每天 03:00
-- Wiki bridge: indexDreamReports=true, indexDailyNotes=true, indexMemoryRoot=true, followMemoryEvents=true
-- Wiki digest: includeCompiledDigestPrompt=true
-- Proxy: 不设 HTTP_PROXY（Surge TUN 层覆盖）
+```bash
+tail -80 ~/.openclaw/logs/gateway.log
+tail -80 ~/.openclaw/logs/gateway.err.log
+```
 
-## 故障排查
-
-### Gateway 起不来
-
-1. `launchctl print gui/$(id -u)/ai.openclaw.gateway` 看状态
-2. `tail -20 ~/.openclaw/logs/gateway.err.log` 看错误
-3. `pnpm openclaw doctor` 自动诊断；`--fix` 2026-05-29 起安全，可直接加
-4. 仍想精细控制时，看到具体问题用 `config set` 单点改
-
-### Memory 不可用
-
-1. `pnpm openclaw memory status` 检查
-2. SQLite 损坏修复：
-   ```bash
-   cp bad.sqlite bad.sqlite.corrupt-bak
-   sqlite3 bad.sqlite ".recover" | sqlite3 recovered.sqlite
-   sqlite3 recovered.sqlite "INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');"
-   sqlite3 recovered.sqlite "PRAGMA integrity_check;"
-   mv recovered.sqlite bad.sqlite
-   ```
-
-### Agent 看到旧路径/旧配置
-
-1. openclaw.json
-2. 所有 shell 配置（.profile, .zshrc, **.zprofile**, .bashrc, .zshenv）
-3. .env
-4. LaunchAgent plist
-5. **launchctl getenv**（独立于 shell！）
-6. 内部 symlink
-7. Agent 需要 /new 开新 session 刷新环境
-
-## LaunchAgent plist 位置
-
-- Gateway: `~/Library/LaunchAgents/ai.openclaw.gateway.plist`
-- Media notifier: `~/Library/LaunchAgents/com.chris.media-notifier.plist`
-- Velop manager: `~/Library/LaunchAgents/com.chris.velop-manager.plist`
-- 小红书 MCP: `~/Library/LaunchAgents/com.openclaw.xiaohongshu-mcp.plist`
-
-## 危险操作提醒
-
-参见 CLAUDE.md 危险操作硬锁，以下操作**必须用户明确指示**：
-
-1. `pnpm build`（主 repo）— 会覆盖正在跑的 gateway
-2. `git rebase` / `git reset --hard`
-3. `openclaw gateway restart`
-4. `git push --force`
-5. 升级版本/切换 tag
-6. 修改 `cron/jobs.json`
-
-（曾经的第 7 条「doctor --fix」已移除：2026-05-29 起 --fix 在这台机上安全，不再属于危险硬锁。见 step 6 / memory `doctor_fix_caveat`。）
+遇到日志和当前 health 冲突时，当前 health/status 优先，日志只当历史证据。
