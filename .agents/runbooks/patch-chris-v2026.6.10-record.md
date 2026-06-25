@@ -61,3 +61,14 @@ Before upgrading, `.agents/runbooks/patch-chris-upstream.md` was rewritten from 
 - `pnpm config:*` initially triggered pnpm's dependency pre-run check and hung on optional platform package downloads. It was interrupted and rerun via direct `node --import tsx` scripts.
 - Because this record commit changes `HEAD`, do a final build and gateway restart after committing it.
 - Deep checks not run by default: full CI, full `check:changed`, broad Feishu/Telegram/iMessage test suite. Risk is accepted for this local gateway update because runtime conflict scope was one Feishu helper and its narrow test passed.
+
+## Missed post-upgrade step fixed
+
+Chris pointed out the same post-upgrade miss recurred again: the Obsidian upgrade note and local ops reference refresh were not enforced by the runbook.
+
+Applied immediately:
+
+- Wrote Obsidian note: `~/Documents/ChrisData/Agent/main/upgrades/2026-06-25.md`.
+- Refreshed `openclaw-local-ops` references: 676 docs, 9190 schema paths.
+- Added `.agents/scripts/patch-chris-post-upgrade-gate.mjs`.
+- Updated the main runbook so final completion requires the gate after push.

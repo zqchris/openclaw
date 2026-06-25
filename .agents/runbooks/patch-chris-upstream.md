@@ -212,6 +212,7 @@ rg -n '^(export )?(http_proxy|https_proxy|all_proxy|no_proxy|HTTP_PROXY|HTTPS_PR
 
 ```bash
 .agents/runbooks/patch-chris-v<TARGET>-record.md
+~/Documents/ChrisData/Agent/main/upgrades/YYYY-MM-DD.md
 ```
 
 记录必须短：
@@ -222,8 +223,16 @@ rg -n '^(export )?(http_proxy|https_proxy|all_proxy|no_proxy|HTTP_PROXY|HTTPS_PR
 - 冲突和生成物
 - build/restart/健康检查结果
 - 未跑的深度检查
+- Obsidian upgrade note 路径
+- local-ops references refresh 结果
 
 如果记录提交发生在 build 之后，`HEAD` 变了。再跑一次 `pnpm build` 或至少确认 `openclaw gateway status` 没触发 stale-dist rebuild；保险做法是记录提交后再最终 build/restart。
+
+升级后刷新 Codex 本地运维索引：
+
+```bash
+/Users/chris/.codex/skills/openclaw-local-ops/scripts/refresh_refs.py
+```
 
 ### 10. 推送
 
@@ -233,6 +242,24 @@ git fetch origin
 git log --oneline -1 origin/main
 git log --oneline -1 origin/patch/chris
 ```
+
+### 11. Post-upgrade gate
+
+最后必须跑机器检查，不通过就不能汇报“完成”：
+
+```bash
+node .agents/scripts/patch-chris-post-upgrade-gate.mjs
+```
+
+这个 gate 会检查：
+
+- runbook record 存在。
+- Obsidian upgrade note 包含目标版本。
+- `openclaw-local-ops` references 是最终 HEAD 之后刷新出来的。
+- `dist/index.js` 可 import，`dist-runtime` 有 bundled plugin manifest。
+- CLI / gateway / RPC 都是目标版本，gateway running，config audit OK，plugin drift 为空。
+- health OK，iMessage configured/running/probe OK。
+- `origin/main` 指向目标 tag，`origin/patch/chris` 等于本地 HEAD。
 
 ## 什么时候升级验证强度
 
