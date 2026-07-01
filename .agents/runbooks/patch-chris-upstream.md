@@ -218,8 +218,10 @@ rg -n '^(export )?(http_proxy|https_proxy|all_proxy|no_proxy|HTTP_PROXY|HTTPS_PR
 记录必须短：
 
 - source/target tag
+- 新版功能 / 变化导读：先用 Chris 当前使用场景解释“升了能得到什么”，再列低相关的新功能。不要只写 upstream changelog 标题。
 - 更新收益
-- keep/drop/port 摘要
+- 实际保留 patch stack：至少列 code-affecting commit hash + subject；docs/runbook/generated 可以归组，但不能只写笼统“保留 Feishu 补丁”。
+- keep/drop/port 摘要：drop 要说明是上游覆盖、低使用、已关闭、还是旧 workaround。
 - 冲突和生成物
 - build/restart/健康检查结果
 - 未跑的深度检查

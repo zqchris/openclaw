@@ -18,6 +18,28 @@
 
 Slack relay, Mattermost `/oc_queue`, Android settings panels, WhatsApp quote/JID fixes, and mobile exec approval work are not current local drivers, so this upgrade was not tested around them.
 
+## 新功能 / 变化导读
+
+这版不是单一大功能版，更像一次 channel / gateway / agent runtime 稳定性合并。按 Chris 当前用法，重点如下：
+
+### 本机高相关
+
+- Telegram delivery 更稳：progress draft、webhook lifecycle、queued update draining、reaction directive、mirror write dedupe 等多处修复。Chris 仍把 Telegram 当成主要控制/日报入口，所以这部分值得升，但也让旧本机 Telegram recovery/upload-file 补丁不再默认保留。
+- Gateway session safety 更稳：stuck release claims、draining state、remote probe timeout、malformed paired access lists、non-delivery session identity 都有修复。对应本机长期运行 gateway、cron、channel probe 的稳定性。
+- Agent turn / fallback 更稳：aborted tool run 会更干净地停下；provider response body 有边界；Claude CLI credit failure、Codex usage-limit payload 能更正确进入 fallback/分类逻辑。对应 Chris 的长会话、多 provider fallback 和 Codex session 使用。
+- Cron delivery validation 更稳：no-config delivery check、thread-aware failure-destination dedupe、pending recurring run retention 都有修复。对应本机 GitHub daily、晨报、财务/票据/TapDB 等 cron。
+- UI/config 安全边界更好：DOMPurify patched release、non-interactive configure fails closed、TLS empty path reject。不是每天直接用，但属于低成本的安全/配置防错收益。
+- Provider/model 兼容性增强：OpenRouter canonical IDs、Ollama/Gemini/model catalog prefix、encrypted reasoning 等处理更完整。当前主路径是 OpenAI/LiteLLM/Claude/Gemini 等多 provider 组合，属于潜在稳定性收益。
+
+### 本机低相关 / 暂不作为升级理由
+
+- Slack relay mode：当前本机主 channel 不是 Slack。
+- Mattermost native `/oc_queue`：当前不用 Mattermost。
+- Android settings detail panels / mobile exec approval UX：当前这次没有 Android/mobile QA。
+- WhatsApp native quote / JID drift / durable reply fixes：当前本机主 channel 不含 WhatsApp。
+- Native plugin icon manifest、official plugin externalization：对安装/插件生态有用，但不是 Chris 本机 runtime 当前痛点。
+- RAFT CLI wake bridge、`openclaw agent --message-file`：是有用的新 operator path，但本轮没有把它纳入本机工作流验证。
+
 ## 最近 3 天使用审计
 
 Evidence window: local OpenClaw config, cron SQLite, and `~/.openclaw/agents/*/sessions/*.trajectory.jsonl` modified in the last 3 days.
@@ -51,15 +73,31 @@ Rationale:
 - Gateway restart-attempt reset is low-value until a repeated restart/backoff symptom reappears.
 - Generated metadata is always dropped and regenerated for the target tag.
 
-## Kept patches
+## 实际保留 patch stack
 
-- Feishu referenced-media handling:
-  - `fix(feishu): pull attachments from quoted/root/thread history`
-  - `fix(feishu): download rich-text referenced media`
-  - `fix(feishu): use saved resource helper for referenced media`
-- Feishu sender-name 41050 cache/silence patch.
-- Live session model switch patch: `fix(agents): respect caller-supplied model in live session switch check`.
-- Runbook records and post-upgrade gate.
+`git log --oneline v2026.6.11..patch/chris` after this upgrade contains the local stack below. The code-affecting local patches kept are:
+
+- `f8ac5b38e6 fix(feishu): use saved resource helper for referenced media`
+- `e09607dc5a fix(feishu): download rich-text referenced media`
+- `0ec8d78dac fix(feishu): silence and cache 41050 'no user authority' on sender-name lookup`
+- `a085c660fb fix(feishu): pull attachments from quoted/root/thread history`
+- `d67d66ffc0 fix(agents): respect caller-supplied model in live session switch check`
+
+Operational/docs/generated commits kept:
+
+- `b9749ce1c8 chore: regen config metadata for v2026.6.11`
+- `b4e0c2404a chore: enforce patch/chris post-upgrade gate`
+- `59829986c8 docs(runbook): record v2026.6.10 upgrade`
+- `fddaa05cc1 docs(runbook): streamline patch/chris upgrade flow`
+- Current and older upgrade records from `v2026.5.12` through `v2026.6.11`, retained as local maintenance history.
+- This follow-up runbook clarification, which makes feature intro and actual kept patch stack mandatory in future records.
+
+Kept rationale:
+
+- Feishu referenced media / rich-text / quoted-root-thread patches are still part of the actual Feishu workflow surface, and the targeted tests pass.
+- Feishu 41050 sender-name cache/silence remains a low-risk local noise reduction for known Feishu API behavior.
+- Live session model switch remains relevant to Chris's interactive model/session workflow.
+- Runbook/gate commits are local operating safety rails, not upstream product behavior.
 
 ## Rebase / generation
 
