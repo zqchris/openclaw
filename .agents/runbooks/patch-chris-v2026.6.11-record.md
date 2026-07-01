@@ -40,6 +40,30 @@ Slack relay, Mattermost `/oc_queue`, Android settings panels, WhatsApp quote/JID
 - Native plugin icon manifest、official plugin externalization：对安装/插件生态有用，但不是 Chris 本机 runtime 当前痛点。
 - RAFT CLI wake bridge、`openclaw agent --message-file`：是有用的新 operator path，但本轮没有把它纳入本机工作流验证。
 
+## 功能开关建议
+
+本轮建议：不要主动打开新的 channel / plugin / cron / memory 功能。6.11 对 Chris 的主要收益是默认生效的稳定性修复，不需要改 `~/.openclaw/openclaw.json`。
+
+### 建议现在打开
+
+- 无。没有发现一个新功能值得在这轮升级里立即改配置开启。
+
+### 只观察或按需使用
+
+- `openclaw agent --message-file`：不需要配置。适合以后把长 prompt / 长报告 / 大段 release note 文件化传给 agent，先按需用，不需要改常驻配置。
+- Per-agent usage-cost reporting：不需要配置。以后排查某个 agent 或 cron 费用时再用，不需要持续开启。
+- Per-DM model override / `directUserId`：只有当某个 DM 明确需要固定更强或更便宜模型时再配置；当前 Telegram / Feishu / iMessage 路由没有证据需要立刻改。
+- RAFT CLI wake bridge：先观察。除非明确要从外部系统远程唤醒本机 OpenClaw，否则不打开。
+
+### 暂不打开
+
+- Slack relay mode：当前本机不使用 Slack 作为主入口。
+- Mattermost `/oc_queue`：当前不用 Mattermost。
+- WhatsApp quote / JID / durable reply 相关能力：当前本机没有 WhatsApp 主路径。
+- Android settings panels / mobile exec approval UX：当前没有 Android/mobile 运行链路验证。
+- Memory / Dreaming：继续保持关闭。最近 3 天 `dreaming` 调用为 0，旧 Wiki / Dreaming 已不是 Chris 的个人记忆入口。
+- ACP/acpx runtime：继续不启用；本轮只同步了 6.11 所需 `acpx@0.11.2` 依赖以保证 build。
+
 ## 最近 3 天使用审计
 
 Evidence window: local OpenClaw config, cron SQLite, and `~/.openclaw/agents/*/sessions/*.trajectory.jsonl` modified in the last 3 days.
