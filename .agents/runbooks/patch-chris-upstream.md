@@ -265,6 +265,21 @@ node .agents/scripts/patch-chris-post-upgrade-gate.mjs
 - health OK，iMessage configured/running/probe OK。
 - `origin/main` 指向目标 tag，`origin/patch/chris` 等于本地 HEAD。
 
+## 自动模式(Maker 定时任务)
+
+Maker 侧有每日定时任务 `openclaw-auto-upgrade`,固定注入同一个汇报 session。无人值守时按本节执行,其余步骤与升级快路径完全一致。
+
+自动判定:
+
+- `git fetch upstream --tags` 后对比 GitHub/npm latest 正式 tag 与 `openclaw --version`。无新正式版 → 本轮静默跳过,只回一行现状,不做任何变更。
+- 有新正式版 → 自主走完快路径 1–11:补丁按默认规则自行 keep/drop(generated metadata drop 重生成、上游覆盖 drop、仍修本机真实问题 keep),rebase、生成物、build、`openclaw gateway install --force` 重启、健康检查。
+- 健康检查未过 → 先跑一次 `openclaw doctor --fix`(可能自动重启 gateway)再复检,复检仍失败按回滚处理。
+- record 文件、Obsidian note、references 刷新、push `--force-with-lease`、post-upgrade gate 全部照常,gate 不过不许报"完成"。
+
+自动回滚(以下任一即触发):rebase 出现无法高置信解决的运行时代码冲突;build/import/config validate 失败;gate 失败。动作:`git reset --hard` 回升级前 head(reflog 或 `origin/patch/chris`)→ 重 build → 重启 → 确认健康 → 在汇报 session 里明确报告失败原因和回滚结果。
+
+自动模式边界:只做升级链路。config 优化、channel/secrets/cron 变更一律不碰;不合并 upstream/main;不新开 session。
+
 ## 什么时候升级验证强度
 
 提高验证强度的条件：
