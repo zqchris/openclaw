@@ -8,6 +8,7 @@
 - `升级` 默认走轻量发布路径：rebase 本机 patch、build、重启、健康检查。
 - 不做默认大备份。`origin/patch/chris`、reflog、release tag 已足够兜底；只有 config/schema/data migration 风险明确时才额外备份。
 - 不把上游 `main` merge 进来。正式版只跟 release tag。
+- 本机是源码安装,入口 `/Users/chris/.local/bin/openclaw`;禁止 `npm i -g openclaw@latest`,那会装出平行 npm 副本。`~/.openclaw/PATCHING.md` 是 npm 时代遗留文档,只作补丁历史参考。
 
 ## 本机布局
 
@@ -234,7 +235,7 @@ rg -n '^(export )?(http_proxy|https_proxy|all_proxy|no_proxy|HTTP_PROXY|HTTPS_PR
 升级后刷新 Codex 本地运维索引：
 
 ```bash
-/Users/chris/.codex/skills/openclaw-local-ops/scripts/refresh_refs.py
+/Users/chris/.agents/skills/openclaw-local-ops/scripts/refresh_refs.py
 ```
 
 ### 10. 推送

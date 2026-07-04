@@ -74,7 +74,7 @@ const head = run("git", ["rev-parse", "HEAD"]);
 const shortHead = run("git", ["rev-parse", "--short=7", "HEAD"]);
 const recordPath = path.join(repo, ".agents/runbooks", `patch-chris-${tag}-record.md`);
 const notePath = path.join("/Users/chris/Documents/ChrisData/Agent/main/upgrades", `${date}.md`);
-const refsDir = "/Users/chris/.codex/skills/openclaw-local-ops/references";
+const refsDir = "/Users/chris/.agents/skills/openclaw-local-ops/references";
 const refFiles = [
   "config-schema-map.md",
   "docs-route-map.md",
