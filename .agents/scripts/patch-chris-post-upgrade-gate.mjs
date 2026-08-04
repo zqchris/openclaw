@@ -68,7 +68,9 @@ function localDate() {
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8"));
 const version = String(args.get("version") ?? packageJson.version);
-const tag = version.startsWith("v") ? version : `v${version}`;
+// --tag overrides tag derivation for npm republish tags (e.g. v2026.7.1-2 with package version 2026.7.1).
+const rawTag = String(args.get("tag") ?? version);
+const tag = rawTag.startsWith("v") ? rawTag : `v${rawTag}`;
 const date = String(args.get("date") ?? localDate());
 const head = run("git", ["rev-parse", "HEAD"]);
 const shortHead = run("git", ["rev-parse", "--short=7", "HEAD"]);
